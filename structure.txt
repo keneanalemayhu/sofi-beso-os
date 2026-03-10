@@ -1,0 +1,20 @@
+sofi-beso-os/
+├── src/
+│   ├── controllers/
+│   │   ├── analytics.controller.ts
+│   │   ├── menu.controller.ts
+│   │   ├── order.controller.ts
+│   │   ├── payment.controller.ts
+│   │   └── waiter.controller.ts
+│   ├── routes/
+│   │   ├── analytics.routes.ts
+│   │   ├── menu.routes.ts
+│   │   ├── order.routes.ts
+│   │   ├── payment.routes.ts
+│   │   └── waiter.routes.ts
+│   ├── app.ts
+│   ├── db.ts
+│   └── server.ts
+├── database.sql
+├── package.json
+└── tsconfig.json

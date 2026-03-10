@@ -1,0 +1,230 @@
+// src/controllers/order.controller.ts
+
+import { Request, Response } from "express";
+import { pool } from "../db";
+import type { Server as IOServer } from "socket.io";
+
+type OrderItemInput = {
+  menu_item_id: string;
+  quantity: number;
+  comment?: string | null;
+};
+
+function getIO(req: Request): IOServer | undefined {
+  return req.app.locals.io as IOServer | undefined;
+}
+
+export async function createOrder(req: Request, res: Response) {
+  const { waiter_id, created_by, items } = req.body as {
+    waiter_id?: string | null;
+    created_by: string;
+    items: OrderItemInput[];
+  };
+
+  if (!created_by || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: "Invalid order data" });
+  }
+
+  for (const it of items) {
+    if (!it?.menu_item_id || typeof it.quantity !== "number" || it.quantity <= 0) {
+      return res.status(400).json({ error: "Invalid order items" });
+    }
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    // Fetch all prices in one query + require active items
+    const ids = [...new Set(items.map((i) => i.menu_item_id))];
+    const menuRes = await client.query(
+      `SELECT id, price
+       FROM menu_items
+       WHERE id = ANY($1::uuid[])
+       AND is_active = TRUE`,
+      [ids]
+    );
+
+    const priceMap = new Map<string, number>();
+    for (const row of menuRes.rows) priceMap.set(row.id, Number(row.price));
+
+    if (priceMap.size !== ids.length) {
+      throw new Error("One or more menu items are invalid or inactive");
+    }
+
+    const orderResult = await client.query(
+      `INSERT INTO orders (waiter_id, created_by)
+       VALUES ($1, $2)
+       RETURNING *`,
+      [waiter_id || null, created_by]
+    );
+
+    const order = orderResult.rows[0];
+    let total = 0;
+
+    for (const item of items) {
+      const price = priceMap.get(item.menu_item_id)!;
+      total += price * item.quantity;
+
+      await client.query(
+        `INSERT INTO order_items
+         (order_id, menu_item_id, quantity, price_at_time, comment)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [order.id, item.menu_item_id, item.quantity, price, item.comment || null]
+      );
+    }
+
+    await client.query(`UPDATE orders SET total_amount = $1 WHERE id = $2`, [
+      total,
+      order.id,
+    ]);
+
+    await client.query("COMMIT");
+
+    getIO(req)?.emit("new_order", { orderId: order.id });
+    res.json({ success: true, orderId: order.id, total });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error(err);
+    res.status(500).json({ error: "Failed to create order" });
+  } finally {
+    client.release();
+  }
+}
+
+export async function getActiveOrders(_: Request, res: Response) {
+  try {
+    const result = await pool.query(`
+      SELECT * FROM orders
+      WHERE status = 'pending'
+      ORDER BY created_at ASC
+    `);
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch orders" });
+  }
+}
+
+export async function getActiveOrdersWithItems(_: Request, res: Response) {
+  try {
+    const ordersResult = await pool.query(`
+      SELECT *
+      FROM orders
+      WHERE status = 'pending'
+      ORDER BY created_at ASC
+    `);
+
+    const orders = ordersResult.rows;
+
+    if (orders.length === 0) {
+      return res.json([]);
+    }
+
+    const orderIds = orders.map((o) => o.id);
+
+    const itemsResult = await pool.query(
+      `SELECT
+         oi.*,
+         m.name
+       FROM order_items oi
+       JOIN menu_items m ON oi.menu_item_id = m.id
+       WHERE oi.order_id = ANY($1::uuid[])
+       ORDER BY oi.created_at ASC`,
+      [orderIds]
+    );
+
+    const itemsByOrderId = new Map<string, any[]>();
+
+    for (const item of itemsResult.rows) {
+      if (!itemsByOrderId.has(item.order_id)) {
+        itemsByOrderId.set(item.order_id, []);
+      }
+      itemsByOrderId.get(item.order_id)!.push(item);
+    }
+
+    const payload = orders.map((order) => ({
+      order,
+      items: itemsByOrderId.get(order.id) || [],
+    }));
+
+    res.json(payload);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch active orders" });
+  }
+}
+
+export async function getOrderById(req: Request, res: Response) {
+  try {
+    const order = await pool.query(`SELECT * FROM orders WHERE id = $1`, [
+      req.params.id,
+    ]);
+
+    if (!order.rows.length) {
+      return res.status(404).json({ error: "Order not found" });
+    }
+
+    const items = await pool.query(
+      `SELECT oi.*, m.name
+       FROM order_items oi
+       JOIN menu_items m ON oi.menu_item_id = m.id
+       WHERE oi.order_id = $1`,
+      [req.params.id]
+    );
+
+    res.json({ order: order.rows[0], items: items.rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch order" });
+  }
+}
+
+export async function updateOrderStatus(req: Request, res: Response) {
+  const { status } = req.body as { status?: string };
+  const allowed = ["pending","completed"];
+
+  if (!status || !allowed.includes(status)) {
+    return res.status(400).json({ error: "Invalid status" });
+  }
+
+  try {
+    const completedAt = status === "completed" ? new Date() : null;
+
+    const result = await pool.query(
+      `
+      UPDATE orders
+      SET status = $1,
+          completed_at = $2
+      WHERE id = $3
+      RETURNING *
+      `,
+      [status, completedAt, req.params.id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Order not found" });
+    }
+
+    try {
+      getIO(req)?.emit("order_status_update", {
+        orderId: req.params.id,
+        status,
+      });
+    } catch (socketErr) {
+      console.error("socket emit error:", socketErr);
+    }
+
+    return res.json({
+      success: true,
+      order: result.rows[0],
+    });
+  } catch (err) {
+    console.error("updateOrderStatus error:", err);
+    return res.status(500).json({
+      error: "Status update failed",
+      details: err instanceof Error ? err.message : "Unknown error",
+    });
+  }
+}
