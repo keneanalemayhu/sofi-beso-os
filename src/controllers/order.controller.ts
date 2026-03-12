@@ -182,25 +182,58 @@ export async function getOrderById(req: Request, res: Response) {
 }
 
 export async function updateOrderStatus(req: Request, res: Response) {
-  const { status } = req.body as { status?: string };
-  const allowed = ["pending","completed"];
+  const { status, voided_by, void_reason } = req.body as {
+    status?: string;
+    voided_by?: string;
+    void_reason?: string;
+  };
+  const allowed = ["pending", "completed", "voided"];
 
   if (!status || !allowed.includes(status)) {
     return res.status(400).json({ error: "Invalid status" });
   }
 
+  if (status === "voided" && !voided_by) {
+    return res.status(400).json({ error: "voided_by is required when voiding an order" });
+  }
+
+
+
   try {
+    const existing = await pool.query(
+      `SELECT id, status FROM orders WHERE id = $1`,
+      [req.params.id]
+    );
+
+    if (!existing.rows.length) {
+      return res.status(404).json({ error: "Order not found" });
+    }
+
+    if (existing.rows[0].status === "completed" && status !== "completed") {
+      return res.status(400).json({ error: "Completed orders cannot be changed" });
+    }
+
+    if (existing.rows[0].status === "voided" && status !== "voided") {
+      return res.status(400).json({ error: "Voided orders cannot be changed" });
+    }
+
     const completedAt = status === "completed" ? new Date() : null;
+    const voidedAt = status === "voided" ? new Date() : null;
+    const voidedBy = status === "voided" ? voided_by : null;
+    const voidReason = status === "voided" ? (void_reason?.trim() || null) : null;
 
     const result = await pool.query(
       `
-      UPDATE orders
-      SET status = $1,
-          completed_at = $2
-      WHERE id = $3
-      RETURNING *
-      `,
-      [status, completedAt, req.params.id]
+    UPDATE orders
+    SET status = $1,
+        completed_at = $2,
+        voided_at = $3,
+        voided_by = $4,
+        void_reason = $5
+    WHERE id = $6
+    RETURNING *
+    `,
+      [status, completedAt, voidedAt, voidedBy, voidReason, req.params.id]
     );
 
     if (result.rowCount === 0) {
@@ -211,6 +244,8 @@ export async function updateOrderStatus(req: Request, res: Response) {
       getIO(req)?.emit("order_status_update", {
         orderId: req.params.id,
         status,
+        voided_by: status === "voided" ? voided_by : null,
+        void_reason: status === "voided" ? (void_reason?.trim() || null) : null,
       });
     } catch (socketErr) {
       console.error("socket emit error:", socketErr);

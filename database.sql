@@ -42,10 +42,18 @@ CREATE TABLE orders (
     waiter_id UUID REFERENCES waiters(id),
     created_by UUID NOT NULL REFERENCES users(id),
     status VARCHAR(20) NOT NULL DEFAULT 'pending'
-        CHECK (status IN ('pending', 'completed')),
+        CHECK (status IN ('pending', 'completed', 'voided')),
     total_amount NUMERIC(10,2) NOT NULL DEFAULT 0 CHECK (total_amount >= 0),
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    completed_at TIMESTAMP
+    completed_at TIMESTAMP,
+    voided_at TIMESTAMP,
+    voided_by UUID REFERENCES users(id),
+    void_reason TEXT,
+    CONSTRAINT orders_void_consistency_check CHECK (
+        (status = 'voided' AND voided_at IS NOT NULL AND voided_by IS NOT NULL)
+        OR
+        (status <> 'voided' AND voided_at IS NULL AND voided_by IS NULL AND void_reason IS NULL)
+    )
 );
 
 -- ORDER ITEMS
@@ -71,6 +79,7 @@ CREATE TABLE payments (
 
 -- INDEXES
 CREATE INDEX idx_orders_status ON orders(status);
+CREATE INDEX idx_orders_voided_by ON orders(voided_by);
 CREATE INDEX idx_orders_created_at ON orders(created_at);
 CREATE INDEX idx_orders_waiter_id ON orders(waiter_id);
 CREATE INDEX idx_order_items_order_id ON order_items(order_id);
