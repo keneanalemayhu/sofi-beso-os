@@ -181,6 +181,55 @@ export async function getOrderById(req: Request, res: Response) {
   }
 }
 
+export async function getOrdersWithItems(_: Request, res: Response) {
+  try {
+    const ordersResult = await pool.query(`
+      SELECT *
+      FROM orders
+      WHERE status IN ('pending', 'completed')
+      ORDER BY created_at DESC
+    `);
+
+    const orders = ordersResult.rows;
+
+    if (orders.length === 0) {
+      return res.json([]);
+    }
+
+    const orderIds = orders.map((o) => o.id);
+
+    const itemsResult = await pool.query(
+      `SELECT
+         oi.*,
+         m.name
+       FROM order_items oi
+       JOIN menu_items m ON oi.menu_item_id = m.id
+       WHERE oi.order_id = ANY($1::uuid[])
+       ORDER BY oi.created_at ASC`,
+      [orderIds]
+    );
+
+    const itemsByOrderId = new Map<string, any[]>();
+
+    for (const item of itemsResult.rows) {
+      if (!itemsByOrderId.has(item.order_id)) {
+        itemsByOrderId.set(item.order_id, []);
+      }
+      itemsByOrderId.get(item.order_id)!.push(item);
+    }
+
+    const payload = orders.map((order) => ({
+      order,
+      items: itemsByOrderId.get(order.id) || [],
+    }));
+
+    res.json(payload);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch orders" });
+  }
+}
+
 export async function updateOrderStatus(req: Request, res: Response) {
   const { status, voided_by, void_reason } = req.body as {
     status?: string;
