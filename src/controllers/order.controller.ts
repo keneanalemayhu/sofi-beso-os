@@ -36,7 +36,11 @@ export async function createOrder(req: Request, res: Response) {
   }
 
   for (const it of items) {
-    if (!it?.menu_item_id || typeof it.quantity !== "number" || it.quantity <= 0) {
+    if (
+      !it?.menu_item_id ||
+      typeof it.quantity !== "number" ||
+      it.quantity <= 0
+    ) {
       return res.status(400).json({ error: "Invalid order items" });
     }
   }
@@ -51,7 +55,7 @@ export async function createOrder(req: Request, res: Response) {
        FROM menu_items
        WHERE id = ANY($1::uuid[])
        AND is_active = TRUE`,
-      [ids]
+      [ids],
     );
 
     const priceMap = new Map<string, number>();
@@ -65,7 +69,7 @@ export async function createOrder(req: Request, res: Response) {
       `INSERT INTO orders (waiter_id, created_by, serving_mode)
        VALUES ($1, $2, $3)
        RETURNING *`,
-      [waiter_id || null, created_by, normalizedServingMode]
+      [waiter_id || null, created_by, normalizedServingMode],
     );
 
     const order = orderResult.rows[0];
@@ -79,7 +83,13 @@ export async function createOrder(req: Request, res: Response) {
         `INSERT INTO order_items
          (order_id, menu_item_id, quantity, price_at_time, comment)
          VALUES ($1, $2, $3, $4, $5)`,
-        [order.id, item.menu_item_id, item.quantity, price, item.comment || null]
+        [
+          order.id,
+          item.menu_item_id,
+          item.quantity,
+          price,
+          item.comment || null,
+        ],
       );
     }
 
@@ -113,9 +123,11 @@ export async function createOrder(req: Request, res: Response) {
 export async function getActiveOrders(_: Request, res: Response) {
   try {
     const result = await pool.query(`
-      SELECT * FROM orders
-      WHERE status = 'pending'
-      ORDER BY created_at ASC
+      SELECT o.*, w.name AS waiter_name
+      FROM orders o
+      LEFT JOIN waiters w ON w.id = o.waiter_id
+      WHERE o.status = 'pending'
+      ORDER BY o.created_at ASC
     `);
 
     res.json(result.rows);
@@ -128,11 +140,12 @@ export async function getActiveOrders(_: Request, res: Response) {
 export async function getActiveOrdersWithItems(_: Request, res: Response) {
   try {
     const ordersResult = await pool.query(`
-      SELECT *
-      FROM orders
-      WHERE status = 'pending'
-      ORDER BY created_at ASC
-    `);
+  SELECT o.*, w.name AS waiter_name
+  FROM orders o
+  LEFT JOIN waiters w ON w.id = o.waiter_id
+  WHERE o.status = 'pending'
+  ORDER BY o.created_at ASC
+`);
 
     const orders = ordersResult.rows;
 
@@ -150,7 +163,7 @@ export async function getActiveOrdersWithItems(_: Request, res: Response) {
        JOIN menu_items m ON oi.menu_item_id = m.id
        WHERE oi.order_id = ANY($1::uuid[])
        ORDER BY oi.created_at ASC`,
-      [orderIds]
+      [orderIds],
     );
 
     const itemsByOrderId = new Map<string, any[]>();
@@ -176,9 +189,15 @@ export async function getActiveOrdersWithItems(_: Request, res: Response) {
 
 export async function getOrderById(req: Request, res: Response) {
   try {
-    const order = await pool.query(`SELECT * FROM orders WHERE id = $1`, [
-      req.params.id,
-    ]);
+    const order = await pool.query(
+      `
+      SELECT o.*, w.name AS waiter_name
+      FROM orders o
+      LEFT JOIN waiters w ON w.id = o.waiter_id
+      WHERE o.id = $1
+      `,
+      [req.params.id],
+    );
 
     if (!order.rows.length) {
       return res.status(404).json({ error: "Order not found" });
@@ -189,7 +208,7 @@ export async function getOrderById(req: Request, res: Response) {
        FROM order_items oi
        JOIN menu_items m ON oi.menu_item_id = m.id
        WHERE oi.order_id = $1`,
-      [req.params.id]
+      [req.params.id],
     );
 
     res.json({ order: order.rows[0], items: items.rows });
@@ -202,11 +221,12 @@ export async function getOrderById(req: Request, res: Response) {
 export async function getOrdersWithItems(_: Request, res: Response) {
   try {
     const ordersResult = await pool.query(`
-      SELECT *
-      FROM orders
-      WHERE status IN ('pending', 'completed')
-      ORDER BY created_at DESC
-    `);
+  SELECT o.*, w.name AS waiter_name
+  FROM orders o
+  LEFT JOIN waiters w ON w.id = o.waiter_id
+  WHERE o.status IN ('pending', 'completed')
+  ORDER BY o.created_at DESC
+`);
 
     const orders = ordersResult.rows;
 
@@ -224,7 +244,7 @@ export async function getOrdersWithItems(_: Request, res: Response) {
        JOIN menu_items m ON oi.menu_item_id = m.id
        WHERE oi.order_id = ANY($1::uuid[])
        ORDER BY oi.created_at ASC`,
-      [orderIds]
+      [orderIds],
     );
 
     const itemsByOrderId = new Map<string, any[]>();
@@ -261,15 +281,15 @@ export async function updateOrderStatus(req: Request, res: Response) {
   }
 
   if (status === "voided" && !voided_by) {
-    return res.status(400).json({ error: "voided_by is required when voiding an order" });
+    return res
+      .status(400)
+      .json({ error: "voided_by is required when voiding an order" });
   }
-
-
 
   try {
     const existing = await pool.query(
       `SELECT id, status FROM orders WHERE id = $1`,
-      [req.params.id]
+      [req.params.id],
     );
 
     if (!existing.rows.length) {
@@ -277,7 +297,9 @@ export async function updateOrderStatus(req: Request, res: Response) {
     }
 
     if (existing.rows[0].status === "completed" && status !== "completed") {
-      return res.status(400).json({ error: "Completed orders cannot be changed" });
+      return res
+        .status(400)
+        .json({ error: "Completed orders cannot be changed" });
     }
 
     if (existing.rows[0].status === "voided" && status !== "voided") {
@@ -287,7 +309,7 @@ export async function updateOrderStatus(req: Request, res: Response) {
     const completedAt = status === "completed" ? new Date() : null;
     const voidedAt = status === "voided" ? new Date() : null;
     const voidedBy = status === "voided" ? voided_by : null;
-    const voidReason = status === "voided" ? (void_reason?.trim() || null) : null;
+    const voidReason = status === "voided" ? void_reason?.trim() || null : null;
 
     const result = await pool.query(
       `
@@ -300,7 +322,7 @@ export async function updateOrderStatus(req: Request, res: Response) {
     WHERE id = $6
     RETURNING *
     `,
-      [status, completedAt, voidedAt, voidedBy, voidReason, req.params.id]
+      [status, completedAt, voidedAt, voidedBy, voidReason, req.params.id],
     );
 
     if (result.rowCount === 0) {
@@ -312,7 +334,7 @@ export async function updateOrderStatus(req: Request, res: Response) {
         orderId: req.params.id,
         status,
         voided_by: status === "voided" ? voided_by : null,
-        void_reason: status === "voided" ? (void_reason?.trim() || null) : null,
+        void_reason: status === "voided" ? void_reason?.trim() || null : null,
       });
     } catch (socketErr) {
       console.error("socket emit error:", socketErr);
