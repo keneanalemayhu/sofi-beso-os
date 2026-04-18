@@ -14,9 +14,9 @@ const router = Router();
 
 router.get("/", getActiveOrders);
 router.get("/active-with-items", getActiveOrdersWithItems);
-router.post("/", createOrder);
-router.get("/:id", getOrderById);
-router.patch("/:id/status", updateOrderStatus);
 router.get("/with-items", getOrdersWithItems);
+router.post("/", createOrder);
+router.patch("/:id/status", updateOrderStatus);
+router.get("/:id", getOrderById);
 
 export default router;

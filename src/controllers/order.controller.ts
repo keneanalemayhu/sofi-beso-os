@@ -14,15 +14,25 @@ function getIO(req: Request): IOServer | undefined {
   return req.app.locals.io as IOServer | undefined;
 }
 
+const ALLOWED_SERVING_MODES = ["individual", "shared_tray"] as const;
+type ServingMode = (typeof ALLOWED_SERVING_MODES)[number];
+
 export async function createOrder(req: Request, res: Response) {
-  const { waiter_id, created_by, items } = req.body as {
+  const { waiter_id, created_by, serving_mode, items } = req.body as {
     waiter_id?: string | null;
     created_by: string;
+    serving_mode?: ServingMode;
     items: OrderItemInput[];
   };
 
+  const normalizedServingMode: ServingMode = serving_mode ?? "individual";
+
   if (!created_by || !Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: "Invalid order data" });
+  }
+
+  if (!ALLOWED_SERVING_MODES.includes(normalizedServingMode)) {
+    return res.status(400).json({ error: "Invalid serving_mode" });
   }
 
   for (const it of items) {
@@ -35,7 +45,6 @@ export async function createOrder(req: Request, res: Response) {
   try {
     await client.query("BEGIN");
 
-    // Fetch all prices in one query + require active items
     const ids = [...new Set(items.map((i) => i.menu_item_id))];
     const menuRes = await client.query(
       `SELECT id, price
@@ -53,10 +62,10 @@ export async function createOrder(req: Request, res: Response) {
     }
 
     const orderResult = await client.query(
-      `INSERT INTO orders (waiter_id, created_by)
-       VALUES ($1, $2)
+      `INSERT INTO orders (waiter_id, created_by, serving_mode)
+       VALUES ($1, $2, $3)
        RETURNING *`,
-      [waiter_id || null, created_by]
+      [waiter_id || null, created_by, normalizedServingMode]
     );
 
     const order = orderResult.rows[0];
@@ -81,8 +90,17 @@ export async function createOrder(req: Request, res: Response) {
 
     await client.query("COMMIT");
 
-    getIO(req)?.emit("new_order", { orderId: order.id });
-    res.json({ success: true, orderId: order.id, total });
+    getIO(req)?.emit("new_order", {
+      orderId: order.id,
+      serving_mode: normalizedServingMode,
+    });
+
+    res.json({
+      success: true,
+      orderId: order.id,
+      total,
+      serving_mode: normalizedServingMode,
+    });
   } catch (err) {
     await client.query("ROLLBACK");
     console.error(err);
