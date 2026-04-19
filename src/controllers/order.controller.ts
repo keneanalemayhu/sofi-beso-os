@@ -268,6 +268,78 @@ export async function getOrdersWithItems(_: Request, res: Response) {
   }
 }
 
+export async function getCompletedOrdersByDay(req: Request, res: Response) {
+  const { day } = req.query as { day?: string };
+
+  if (!day) {
+    return res.status(400).json({ error: "day query param is required" });
+  }
+
+  // expects YYYY-MM-DD
+  const start = new Date(`${day}T00:00:00`);
+  const end = new Date(`${day}T23:59:59.999`);
+
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return res.status(400).json({ error: "Invalid day format. Use YYYY-MM-DD" });
+  }
+
+  try {
+    const ordersResult = await pool.query(
+      `
+      SELECT o.*, w.name AS waiter_name
+      FROM orders o
+      LEFT JOIN waiters w ON w.id = o.waiter_id
+      WHERE o.status = 'completed'
+        AND o.completed_at IS NOT NULL
+        AND o.completed_at >= $1
+        AND o.completed_at <= $2
+      ORDER BY o.completed_at DESC
+      `,
+      [start, end],
+    );
+
+    const orders = ordersResult.rows;
+
+    if (orders.length === 0) {
+      return res.json([]);
+    }
+
+    const orderIds = orders.map((o) => o.id);
+
+    const itemsResult = await pool.query(
+      `
+      SELECT
+        oi.*,
+        m.name
+      FROM order_items oi
+      JOIN menu_items m ON oi.menu_item_id = m.id
+      WHERE oi.order_id = ANY($1::uuid[])
+      ORDER BY oi.created_at ASC
+      `,
+      [orderIds],
+    );
+
+    const itemsByOrderId = new Map<string, any[]>();
+
+    for (const item of itemsResult.rows) {
+      if (!itemsByOrderId.has(item.order_id)) {
+        itemsByOrderId.set(item.order_id, []);
+      }
+      itemsByOrderId.get(item.order_id)!.push(item);
+    }
+
+    const payload = orders.map((order) => ({
+      order,
+      items: itemsByOrderId.get(order.id) || [],
+    }));
+
+    return res.json(payload);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Failed to fetch completed orders by day" });
+  }
+}
+
 export async function updateOrderStatus(req: Request, res: Response) {
   const { status, voided_by, void_reason } = req.body as {
     status?: string;
