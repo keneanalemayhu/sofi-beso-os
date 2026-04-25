@@ -7,6 +7,7 @@ import { createServer } from "http";
 import { Server } from "socket.io";
 import { createApp } from "./app";
 import { pool } from "./db";
+import { syncToCloud } from "./sync-worker";
 
 const app = createApp();
 const httpServer = createServer(app);
@@ -36,6 +37,11 @@ async function start() {
     httpServer.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
     });
+    setInterval(() => {
+      syncToCloud().catch((err) => {
+        console.error("Sync worker error:", err.message);
+      });
+    }, 30_000);
   } catch (err) {
     console.error("Startup failed:", err);
     process.exit(1);

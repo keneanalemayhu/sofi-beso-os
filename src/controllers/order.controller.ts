@@ -18,12 +18,15 @@ const ALLOWED_SERVING_MODES = ["individual", "shared_tray"] as const;
 type ServingMode = (typeof ALLOWED_SERVING_MODES)[number];
 
 export async function createOrder(req: Request, res: Response) {
-  const { waiter_id, created_by, serving_mode, items } = req.body as {
-    waiter_id?: string | null;
-    created_by: string;
-    serving_mode?: ServingMode;
-    items: OrderItemInput[];
-  };
+  const { waiter_id, created_by, serving_mode, device_id, local_id, items } =
+    req.body as {
+      waiter_id?: string | null;
+      created_by: string;
+      serving_mode?: ServingMode;
+      device_id?: string;
+      local_id?: string;
+      items: OrderItemInput[];
+    };
 
   const normalizedServingMode: ServingMode = serving_mode ?? "individual";
 
@@ -66,10 +69,20 @@ export async function createOrder(req: Request, res: Response) {
     }
 
     const orderResult = await client.query(
-      `INSERT INTO orders (waiter_id, created_by, serving_mode)
-       VALUES ($1, $2, $3)
-       RETURNING *`,
-      [waiter_id || null, created_by, normalizedServingMode],
+      `INSERT INTO orders
+      (waiter_id, created_by, serving_mode, device_id, local_id)
+      VALUES ($1, $2, $3, $4, $5)
+      ON CONFLICT (device_id, local_id)
+      WHERE device_id IS NOT NULL AND local_id IS NOT NULL
+      DO UPDATE SET updated_at = NOW()
+      RETURNING *`,
+      [
+        waiter_id || null,
+        created_by,
+        normalizedServingMode,
+        device_id || process.env.DEVICE_ID || null,
+        local_id || null,
+      ],
     );
 
     const order = orderResult.rows[0];

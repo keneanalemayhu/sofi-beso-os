@@ -77,6 +77,21 @@ CREATE TABLE payments (
     paid_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS sync_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    device_id TEXT NOT NULL,
+    local_event_id UUID NOT NULL,
+    entity_type VARCHAR(30) NOT NULL,
+    entity_local_id UUID NOT NULL,
+    event_type VARCHAR(30) NOT NULL,
+    payload JSONB NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    synced_at TIMESTAMP,
+    UNIQUE(device_id, local_event_id)
+);
+
+
+
 -- INDEXES
 CREATE INDEX idx_orders_status ON orders(status);
 CREATE INDEX idx_orders_voided_by ON orders(voided_by);
@@ -85,3 +100,4 @@ CREATE INDEX idx_orders_waiter_id ON orders(waiter_id);
 CREATE INDEX idx_order_items_order_id ON order_items(order_id);
 CREATE INDEX idx_menu_items_category_id ON menu_items(category_id);
 CREATE INDEX idx_payments_order_id ON payments(order_id);
+CREATE INDEX IF NOT EXISTS idx_sync_events_synced_at ON sync_events(synced_at);
