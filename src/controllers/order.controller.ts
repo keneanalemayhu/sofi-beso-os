@@ -302,11 +302,10 @@ export async function getCompletedOrdersByDay(req: Request, res: Response) {
       SELECT o.*, w.name AS waiter_name
       FROM orders o
       LEFT JOIN waiters w ON w.id = o.waiter_id
-      WHERE o.status = 'completed'
-        AND o.completed_at IS NOT NULL
-        AND o.completed_at >= $1
-        AND o.completed_at <= $2
-      ORDER BY o.completed_at DESC
+      WHERE o.status IN ('pending', 'completed')
+        AND o.created_at >= $1
+        AND o.created_at <= $2
+      ORDER BY o.created_at DESC
       `,
       [start, end],
     );
