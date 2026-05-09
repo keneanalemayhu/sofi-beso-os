@@ -5,16 +5,20 @@ sofi-beso-os/
 │   │   ├── menu.controller.ts
 │   │   ├── order.controller.ts
 │   │   ├── payment.controller.ts
+│   │   ├── sync.controller.ts
 │   │   └── waiter.controller.ts
 │   ├── routes/
 │   │   ├── analytics.routes.ts
 │   │   ├── menu.routes.ts
 │   │   ├── order.routes.ts
 │   │   ├── payment.routes.ts
+│   │   ├── sync.routes.ts
 │   │   └── waiter.routes.ts
 │   ├── app.ts
 │   ├── db.ts
-│   └── server.ts
+│   ├── server.ts
+│   └── sync-worker.ts
+├── .gitignore
 ├── database.sql
 ├── package.json
 └── tsconfig.json

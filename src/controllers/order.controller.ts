@@ -3,6 +3,7 @@
 import { Request, Response } from "express";
 import { pool } from "../db";
 import type { Server as IOServer } from "socket.io";
+import { printOrderReceipt } from "../services/print.service";
 
 type OrderItemInput = {
   menu_item_id: string;
@@ -434,5 +435,49 @@ export async function updateOrderStatus(req: Request, res: Response) {
       error: "Status update failed",
       details: err instanceof Error ? err.message : "Unknown error",
     });
+  }
+}
+
+export async function printOrderById(req: Request, res: Response) {
+  try {
+    const orderResult = await pool.query(
+      `
+      SELECT o.*, w.name AS waiter_name
+      FROM orders o
+      LEFT JOIN waiters w ON w.id = o.waiter_id
+      WHERE o.id = $1
+      `,
+      [req.params.id],
+    );
+
+    if (!orderResult.rows.length) {
+      return res.status(404).json({ error: "Order not found" });
+    }
+
+    const itemsResult = await pool.query(
+      `
+      SELECT oi.*, m.name
+      FROM order_items oi
+      JOIN menu_items m ON oi.menu_item_id = m.id
+      WHERE oi.order_id = $1
+      ORDER BY oi.created_at ASC
+      `,
+      [req.params.id],
+    );
+
+    const order = orderResult.rows[0];
+
+    await printOrderReceipt({
+      orderId: order.id,
+      waiterName: order.waiter_name,
+      servingMode: order.serving_mode,
+      total: Number(order.total_amount),
+      items: itemsResult.rows,
+    });
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("printOrderById error:", err);
+    return res.status(500).json({ error: "Failed to print order" });
   }
 }
