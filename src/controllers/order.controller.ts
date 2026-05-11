@@ -158,7 +158,7 @@ export async function getActiveOrdersWithItems(_: Request, res: Response) {
   FROM orders o
   LEFT JOIN waiters w ON w.id = o.waiter_id
   WHERE o.status = 'pending'
-  ORDER BY o.created_at ASC
+  ORDER BY o.created_at DESC
 `);
 
     const orders = ordersResult.rows;
