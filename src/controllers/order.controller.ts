@@ -290,7 +290,7 @@ export async function getCompletedOrdersByDay(req: Request, res: Response) {
 
   const statuses =
     includeVoided === "true"
-      ? ["pending", "completed", "voided"]
+      ? ["voided"]
       : ["pending", "completed"];
 
   if (!day) {
