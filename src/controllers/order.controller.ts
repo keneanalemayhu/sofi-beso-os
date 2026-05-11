@@ -235,12 +235,12 @@ export async function getOrderById(req: Request, res: Response) {
 export async function getOrdersWithItems(_: Request, res: Response) {
   try {
     const ordersResult = await pool.query(`
-  SELECT o.*, w.name AS waiter_name
-  FROM orders o
-  LEFT JOIN waiters w ON w.id = o.waiter_id
-  WHERE o.status IN ('pending', 'completed')
-  ORDER BY o.created_at DESC
-`);
+      SELECT o.*, w.name AS waiter_name
+      FROM orders o
+      LEFT JOIN waiters w ON w.id = o.waiter_id
+      WHERE o.status IN ('pending', 'completed')
+      ORDER BY o.created_at DESC
+    `);
 
     const orders = ordersResult.rows;
 
@@ -283,7 +283,15 @@ export async function getOrdersWithItems(_: Request, res: Response) {
 }
 
 export async function getCompletedOrdersByDay(req: Request, res: Response) {
-  const { day } = req.query as { day?: string };
+  const { day, includeVoided } = req.query as {
+    day?: string;
+    includeVoided?: string;
+  };
+
+  const statuses =
+    includeVoided === "true"
+      ? ["pending", "completed", "voided"]
+      : ["pending", "completed"];
 
   if (!day) {
     return res.status(400).json({ error: "day query param is required" });
@@ -303,12 +311,12 @@ export async function getCompletedOrdersByDay(req: Request, res: Response) {
       SELECT o.*, w.name AS waiter_name
       FROM orders o
       LEFT JOIN waiters w ON w.id = o.waiter_id
-      WHERE o.status IN ('pending', 'completed')
+      WHERE o.status = ANY($3::text[])
         AND o.created_at >= $1
         AND o.created_at <= $2
       ORDER BY o.created_at DESC
       `,
-      [start, end],
+      [start, end, statuses],
     );
 
     const orders = ordersResult.rows;
