@@ -154,12 +154,14 @@ export async function getActiveOrders(_: Request, res: Response) {
 export async function getActiveOrdersWithItems(_: Request, res: Response) {
   try {
     const ordersResult = await pool.query(`
-  SELECT o.*, w.name AS waiter_name
-  FROM orders o
-  LEFT JOIN waiters w ON w.id = o.waiter_id
-  WHERE o.status = 'pending'
-  ORDER BY o.created_at DESC
-`);
+      SELECT o.*, w.name AS waiter_name
+      FROM orders o
+      LEFT JOIN waiters w ON w.id = o.waiter_id
+      WHERE o.status = 'pending'
+        AND DATE(o.created_at AT TIME ZONE 'Africa/Addis_Ababa') =
+            DATE(NOW() AT TIME ZONE 'Africa/Addis_Ababa')
+      ORDER BY o.created_at DESC
+    `);
 
     const orders = ordersResult.rows;
 
