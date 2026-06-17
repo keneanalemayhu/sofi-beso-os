@@ -8,6 +8,7 @@ import {
   getCompletedOrdersByDay,
   getOrderById,
   getOrdersWithItems,
+  getOrdersByRange,
   updateOrderStatus,
   printOrderById,
 } from "../controllers/order.controller";
@@ -17,6 +18,7 @@ const router = Router();
 router.get("/", getActiveOrders);
 router.get("/active-with-items", getActiveOrdersWithItems);
 router.get("/with-items", getOrdersWithItems);
+router.get("/by-range", getOrdersByRange);
 router.get("/completed-by-day", getCompletedOrdersByDay);
 router.post("/", createOrder);
 router.patch("/:id/status", updateOrderStatus);

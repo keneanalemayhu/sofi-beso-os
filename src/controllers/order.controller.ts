@@ -491,3 +491,80 @@ export async function printOrderById(req: Request, res: Response) {
     return res.status(500).json({ error: "Failed to print order" });
   }
 }
+
+export async function getOrdersByRange(req: Request, res: Response) {
+  const { from, to } = req.query as { from?: string; to?: string };
+
+  if (!from || !to) {
+    return res
+      .status(400)
+      .json({ error: "from and to query params are required (YYYY-MM-DD)" });
+  }
+
+  // Interpret the range in Addis Ababa local time, inclusive of the whole 'to' day
+  const start = new Date(`${from}T00:00:00+03:00`);
+  const end = new Date(`${to}T23:59:59.999+03:00`);
+
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return res
+      .status(400)
+      .json({ error: "Invalid date format. Use YYYY-MM-DD" });
+  }
+
+  if (start > end) {
+    return res.status(400).json({ error: "from must be before to" });
+  }
+
+  try {
+    const ordersResult = await pool.query(
+      `
+      SELECT o.*, w.name AS waiter_name
+      FROM orders o
+      LEFT JOIN waiters w ON w.id = o.waiter_id
+      WHERE o.created_at >= $1
+        AND o.created_at <= $2
+      ORDER BY o.created_at DESC
+      `,
+      [start, end],
+    );
+
+    const orders = ordersResult.rows;
+
+    if (orders.length === 0) {
+      return res.json([]);
+    }
+
+    const orderIds = orders.map((o) => o.id);
+
+    const itemsResult = await pool.query(
+      `
+      SELECT oi.*, m.name
+      FROM order_items oi
+      JOIN menu_items m ON oi.menu_item_id = m.id
+      WHERE oi.order_id = ANY($1::uuid[])
+      ORDER BY oi.created_at ASC
+      `,
+      [orderIds],
+    );
+
+    const itemsByOrderId = new Map<string, any[]>();
+    for (const item of itemsResult.rows) {
+      if (!itemsByOrderId.has(item.order_id)) {
+        itemsByOrderId.set(item.order_id, []);
+      }
+      itemsByOrderId.get(item.order_id)!.push(item);
+    }
+
+    const payload = orders.map((order) => ({
+      order,
+      items: itemsByOrderId.get(order.id) || [],
+    }));
+
+    return res.json(payload);
+  } catch (err) {
+    console.error(err);
+    return res
+      .status(500)
+      .json({ error: "Failed to fetch orders by range" });
+  }
+}
