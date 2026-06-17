@@ -102,6 +102,25 @@ export async function overviewAnalytics(req: Request, res: Response) {
       [days],
     );
 
+    const itemSeriesQuery = pool.query(
+      `
+      SELECT
+        (o.created_at AT TIME ZONE 'Africa/Addis_Ababa')::date AS day,
+        m.id,
+        m.name,
+        SUM(oi.quantity)::int AS units,
+        COALESCE(SUM(oi.quantity * oi.price_at_time), 0)::float AS value
+      FROM order_items oi
+      JOIN orders o ON o.id = oi.order_id
+      JOIN menu_items m ON m.id = oi.menu_item_id
+      WHERE o.status <> 'voided'
+        AND o.created_at >= (now() AT TIME ZONE 'Africa/Addis_Ababa')::date - ($1::int - 1) * interval '1 day'
+      GROUP BY day, m.id, m.name
+      ORDER BY day ASC, value DESC
+      `,
+      [days],
+    );
+
     // Waiter breakdown: units + value
     const waitersQuery = pool.query(
       `
@@ -122,12 +141,49 @@ export async function overviewAnalytics(req: Request, res: Response) {
       [days],
     );
 
-    const [summary, series, items, waiters] = await Promise.all([
+    const [summary, series, items, itemSeries, waiters] = await Promise.all([
       summaryQuery,
       seriesQuery,
       itemsQuery,
+      itemSeriesQuery,
       waitersQuery,
     ]);
+
+    const itemSeriesMap = new Map<
+      string,
+      {
+        day: string;
+        items: {
+          id: string;
+          name: string;
+          units: number;
+          value: number;
+        }[];
+      }
+    >();
+
+    for (const row of itemSeries.rows) {
+      const day =
+        row.day instanceof Date
+          ? row.day.toISOString().slice(0, 10)
+          : String(row.day).slice(0, 10);
+
+      if (!itemSeriesMap.has(day)) {
+        itemSeriesMap.set(day, {
+          day,
+          items: [],
+        });
+      }
+
+      itemSeriesMap.get(day)!.items.push({
+        id: String(row.id),
+        name: row.name,
+        units: Number(row.units),
+        value: Number(row.value),
+      });
+    }
+
+    const item_series = Array.from(itemSeriesMap.values());
 
     res.json({
       period: days,
@@ -135,6 +191,7 @@ export async function overviewAnalytics(req: Request, res: Response) {
       series: series.rows,
       items: items.rows,
       waiters: waiters.rows,
+      item_series,
     });
   } catch (err) {
     console.error(err);
