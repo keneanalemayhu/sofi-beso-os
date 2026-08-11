@@ -9,6 +9,7 @@ import orderRoutes from "./routes/order.routes";
 import analyticsRoutes from "./routes/analytics.routes";
 import waiterRoutes from "./routes/waiter.routes";
 import syncRoutes from "./routes/sync.routes";
+import expenseRoutes from "./routes/expense.routes";
 
 export function createApp() {
   const app = express();
@@ -37,6 +38,7 @@ export function createApp() {
   app.use("/orders", orderRoutes);
   app.use("/analytics", analyticsRoutes);
   app.use("/waiters", waiterRoutes);
+  app.use("/expenses", expenseRoutes);
   app.use("/sync", syncRoutes);
 
   app.get("/health", (_, res) => res.json({ ok: true }));
