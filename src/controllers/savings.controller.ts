@@ -2,8 +2,11 @@
 
 import { Request, Response } from "express";
 import { pool } from "../db";
+import { param } from "../utils/http";
 
 const ADMIN_ID = process.env.ADMIN_USER_ID || null;
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** SQL fragment: one period's length, based on plan.period_type */
 const PERIOD_INTERVAL = `
@@ -18,7 +21,7 @@ const PERIOD_INTERVAL = `
 export async function listPlans(_req: Request, res: Response) {
   try {
     const { rows } = await pool.query(
-      `SELECT * FROM savings_plan_summary ORDER BY is_active DESC, start_date DESC`
+      `SELECT * FROM savings_plan_summary ORDER BY is_active DESC, start_date DESC`,
     );
     res.json(rows);
   } catch (err) {
@@ -28,18 +31,24 @@ export async function listPlans(_req: Request, res: Response) {
 }
 
 export async function createPlan(req: Request, res: Response) {
-  const { name, period_type, target_per_period, period_count, start_date } = req.body;
+  const { name, period_type, target_per_period, period_count, start_date } =
+    req.body;
 
   if (!name || !period_type || !target_per_period || !period_count) {
     return res.status(400).json({
-      error: "name, period_type, target_per_period and period_count are required",
+      error:
+        "name, period_type, target_per_period and period_count are required",
     });
   }
   if (!["daily", "weekly", "monthly"].includes(period_type)) {
-    return res.status(400).json({ error: "period_type must be daily, weekly or monthly" });
+    return res
+      .status(400)
+      .json({ error: "period_type must be daily, weekly or monthly" });
   }
   if (Number(target_per_period) <= 0 || Number(period_count) <= 0) {
-    return res.status(400).json({ error: "target_per_period and period_count must be positive" });
+    return res
+      .status(400)
+      .json({ error: "target_per_period and period_count must be positive" });
   }
 
   try {
@@ -49,7 +58,14 @@ export async function createPlan(req: Request, res: Response) {
        VALUES ($1, $2, $3, $4,
                COALESCE($5::date, (now() AT TIME ZONE 'Africa/Addis_Ababa')::date), $6)
        RETURNING *`,
-      [name, period_type, target_per_period, period_count, start_date || null, ADMIN_ID]
+      [
+        name,
+        period_type,
+        target_per_period,
+        period_count,
+        start_date || null,
+        ADMIN_ID,
+      ],
     );
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -64,10 +80,16 @@ export async function createPlan(req: Request, res: Response) {
  */
 export async function getPlanDetail(req: Request, res: Response) {
   try {
+    const planId = param(req.params.id);
+    if (!UUID_RE.test(planId))
+      return res.status(400).json({ error: "Invalid plan id" });
+
     const planRes = await pool.query(
-      `SELECT * FROM savings_plan_summary WHERE plan_id = $1`, [req.params.id]
+      `SELECT * FROM savings_plan_summary WHERE plan_id = $1`,
+      [planId],
     );
-    if (!planRes.rows.length) return res.status(404).json({ error: "Plan not found" });
+    if (!planRes.rows.length)
+      return res.status(404).json({ error: "Plan not found" });
 
     const { rows: periods } = await pool.query(
       `WITH p AS (SELECT * FROM savings_plans WHERE id = $1),
@@ -98,7 +120,7 @@ export async function getPlanDetail(req: Request, res: Response) {
          WHERE d.day BETWEEN pe.period_start AND pe.period_end
        ) cash ON TRUE
        ORDER BY pe.period_index`,
-      [req.params.id]
+      [req.params.id],
     );
 
     res.json({ ...planRes.rows[0], periods });
@@ -111,6 +133,10 @@ export async function getPlanDetail(req: Request, res: Response) {
 export async function updatePlan(req: Request, res: Response) {
   const { name, is_active, target_per_period, period_count } = req.body;
   try {
+    const planId = param(req.params.id);
+    if (!UUID_RE.test(planId))
+      return res.status(400).json({ error: "Invalid plan id" });
+
     const { rows } = await pool.query(
       `UPDATE savings_plans SET
          name              = COALESCE($2, name),
@@ -118,7 +144,7 @@ export async function updatePlan(req: Request, res: Response) {
          target_per_period = COALESCE($4, target_per_period),
          period_count      = COALESCE($5, period_count)
        WHERE id = $1 RETURNING *`,
-      [req.params.id, name, is_active, target_per_period, period_count]
+      [planId, name, is_active, target_per_period, period_count],
     );
     if (!rows.length) return res.status(404).json({ error: "Plan not found" });
     res.json(rows[0]);
@@ -130,8 +156,13 @@ export async function updatePlan(req: Request, res: Response) {
 
 export async function deletePlan(req: Request, res: Response) {
   try {
+    const planId = param(req.params.id);
+    if (!UUID_RE.test(planId))
+      return res.status(400).json({ error: "Invalid plan id" });
+
     const { rowCount } = await pool.query(
-      `DELETE FROM savings_plans WHERE id = $1`, [req.params.id]
+      `DELETE FROM savings_plans WHERE id = $1`,
+      [planId],
     );
     if (!rowCount) return res.status(404).json({ error: "Plan not found" });
     res.status(204).send();
@@ -146,9 +177,14 @@ export async function deletePlan(req: Request, res: Response) {
 /** Tick a checkbox. Amount defaults to the plan target; pass one to override. */
 export async function checkPeriod(req: Request, res: Response) {
   const { period_index, amount, note } = req.body;
-  if (!period_index) return res.status(400).json({ error: "period_index is required" });
+  if (!period_index)
+    return res.status(400).json({ error: "period_index is required" });
 
   try {
+    const planId = param(req.params.id);
+    if (!UUID_RE.test(planId))
+      return res.status(400).json({ error: "Invalid plan id" });
+
     const { rows } = await pool.query(
       `WITH p AS (SELECT * FROM savings_plans WHERE id = $1)
        INSERT INTO savings_entries (plan_id, period_index, period_date, amount, note, created_by)
@@ -162,10 +198,12 @@ export async function checkPeriod(req: Request, res: Response) {
                        note   = EXCLUDED.note,
                        saved_at = NOW()
        RETURNING *`,
-      [req.params.id, period_index, amount || null, note || null, ADMIN_ID]
+      [planId, period_index, amount || null, note || null, ADMIN_ID],
     );
     if (!rows.length) {
-      return res.status(400).json({ error: "Plan not found, or period_index out of range" });
+      return res
+        .status(400)
+        .json({ error: "Plan not found, or period_index out of range" });
     }
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -177,9 +215,18 @@ export async function checkPeriod(req: Request, res: Response) {
 /** Untick — deletes the row. */
 export async function uncheckPeriod(req: Request, res: Response) {
   try {
+    const planId = param(req.params.id);
+    if (!UUID_RE.test(planId))
+      return res.status(400).json({ error: "Invalid plan id" });
+
+    const idx = Number(param(req.params.index));
+    if (!Number.isInteger(idx) || idx < 1) {
+      return res.status(400).json({ error: "Invalid period index" });
+    }
+
     const { rowCount } = await pool.query(
       `DELETE FROM savings_entries WHERE plan_id = $1 AND period_index = $2`,
-      [req.params.id, req.params.index]
+      [planId, idx],
     );
     if (!rowCount) return res.status(404).json({ error: "Not saved yet" });
     res.status(204).send();
