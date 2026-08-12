@@ -141,6 +141,8 @@ export async function getActiveOrders(_: Request, res: Response) {
       FROM orders o
       LEFT JOIN waiters w ON w.id = o.waiter_id
       WHERE o.status = 'pending'
+        AND (o.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Africa/Addis_Ababa')::date
+            = (NOW() AT TIME ZONE 'Africa/Addis_Ababa')::date
       ORDER BY o.created_at ASC
     `);
 
@@ -158,8 +160,8 @@ export async function getActiveOrdersWithItems(_: Request, res: Response) {
       FROM orders o
       LEFT JOIN waiters w ON w.id = o.waiter_id
       WHERE o.status = 'pending'
-        AND DATE(o.created_at AT TIME ZONE 'Africa/Addis_Ababa') =
-            DATE(NOW() AT TIME ZONE 'Africa/Addis_Ababa')
+        AND (o.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Africa/Addis_Ababa')::date =
+            (NOW() AT TIME ZONE 'Africa/Addis_Ababa')::date
       ORDER BY o.created_at DESC
     `);
 
@@ -240,8 +242,11 @@ export async function getOrdersWithItems(_: Request, res: Response) {
       SELECT o.*, w.name AS waiter_name
       FROM orders o
       LEFT JOIN waiters w ON w.id = o.waiter_id
-      WHERE o.status IN ('pending', 'completed')
+      WHERE o.status = 'pending'
+        AND (o.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Africa/Addis_Ababa')::date
+            = (NOW() AT TIME ZONE 'Africa/Addis_Ababa')::date
       ORDER BY o.created_at DESC
+      LIMIT 500
     `);
 
     const orders = ordersResult.rows;
@@ -293,15 +298,15 @@ export async function getCompletedOrdersByDay(req: Request, res: Response) {
   const statuses =
     includeVoided === "true"
       ? ["voided"]
-      : ["pending", "completed"];
+      : ["pending"];
 
   if (!day) {
     return res.status(400).json({ error: "day query param is required" });
   }
 
   // expects YYYY-MM-DD
-  const start = new Date(`${day}T00:00:00`);
-  const end = new Date(`${day}T23:59:59.999`);
+  const start = new Date(`${day}T00:00:00+03:00`);
+  const end = new Date(`${day}T23:59:59.999+03:00`);
 
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
     return res.status(400).json({ error: "Invalid day format. Use YYYY-MM-DD" });
@@ -369,7 +374,7 @@ export async function updateOrderStatus(req: Request, res: Response) {
     voided_by?: string;
     void_reason?: string;
   };
-  const allowed = ["pending", "completed", "voided"];
+  const allowed = ["pending", "voided"];
 
   if (!status || !allowed.includes(status)) {
     return res.status(400).json({ error: "Invalid status" });
@@ -391,17 +396,11 @@ export async function updateOrderStatus(req: Request, res: Response) {
       return res.status(404).json({ error: "Order not found" });
     }
 
-    if (existing.rows[0].status === "completed" && status !== "completed") {
-      return res
-        .status(400)
-        .json({ error: "Completed orders cannot be changed" });
-    }
-
     if (existing.rows[0].status === "voided" && status !== "voided") {
       return res.status(400).json({ error: "Voided orders cannot be changed" });
     }
 
-    const completedAt = status === "completed" ? new Date() : null;
+    const completedAt = null;
     const voidedAt = status === "voided" ? new Date() : null;
     const voidedBy = status === "voided" ? voided_by : null;
     const voidReason = status === "voided" ? void_reason?.trim() || null : null;
