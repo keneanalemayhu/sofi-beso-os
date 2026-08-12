@@ -5,7 +5,9 @@
 
 BEGIN;
 
-CREATE OR REPLACE VIEW daily_cash_flow AS
+DROP VIEW IF EXISTS daily_cash_flow;
+
+CREATE VIEW daily_cash_flow AS
 WITH order_days AS (
     SELECT (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Africa/Addis_Ababa')::date AS day,
            SUM(total_amount) AS revenue,
