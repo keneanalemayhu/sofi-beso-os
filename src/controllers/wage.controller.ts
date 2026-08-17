@@ -95,7 +95,7 @@ function nextPayday(w: {
 export async function listWaiterWages(_req: Request, res: Response) {
   try {
     const { rows } = await pool.query(
-      `SELECT w.id, w.name, w.is_active, w.wage_amount, w.wage_cycle,
+      `SELECT w.id, w.name, w.is_active, w.role, w.wage_amount, w.wage_cycle,
               w.wage_day, w.wage_calendar, w.hired_on,
               lp.paid_on   AS last_paid_on,
               lp.amount    AS last_paid_amount,
@@ -144,9 +144,9 @@ export async function updateWaiterWage(req: Request, res: Response) {
          wage_calendar = COALESCE($5, wage_calendar),
          hired_on      = COALESCE($6::date, hired_on)
        WHERE id = $1
-       RETURNING id, name, wage_amount, wage_cycle, wage_day, wage_calendar, hired_on`,
+       RETURNING id, name, role, wage_amount, wage_cycle, wage_day, wage_calendar, hired_on`,
       [
-        req.params.id,
+        waiterId,
         wage_amount,
         wage_cycle,
         wage_day,
