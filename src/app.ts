@@ -13,7 +13,6 @@ import expenseRoutes from "./routes/expense.routes";
 import savingsRoutes from "./routes/savings.routes";
 import wageRoutes from "./routes/wage.routes";
 import branchRoutes from "./routes/branch.routes";
-import { resolveBranch } from "../middleware/branch";
 
 export function createApp() {
   const app = express();
