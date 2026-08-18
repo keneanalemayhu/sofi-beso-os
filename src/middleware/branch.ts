@@ -12,68 +12,75 @@ declare global {
   }
 }
 
-/**
- * Cache device -> branch. Devices are re-registered rarely; a short TTL
- * keeps a moved tablet from being stale for long.
- */
-const cache = new Map<string, { branchId: string; at: number }>();
 const TTL_MS = 60_000;
 
-/** Set only during rollout, while tablets still run the pre-branch bundle. */
+/** slug -> branch id */
+const branchCache = new Map<string, { branchId: string; at: number }>();
+/** device id -> branch id */
+const deviceCache = new Map<string, { branchId: string; at: number }>();
+
+/** Used when a request carries no branch slug (legacy tablets). */
 const FALLBACK_SLUG = process.env.DEFAULT_BRANCH_SLUG || null;
 
 export async function resolveBranch(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
+  const slug = (req.header("X-Branch-Slug") || "").trim() || null;
   const deviceId =
     (req.header("X-Device-Id") || req.body?.device_id || "").trim() || null;
 
+  // Recorded on orders for sync dedup regardless of how branch was resolved
+  if (deviceId) req.deviceId = deviceId;
+
   try {
-    if (deviceId) {
-      const hit = cache.get(deviceId);
+    // 1. Branch from the URL the tablet is on
+    const wanted = slug || FALLBACK_SLUG;
+    if (wanted) {
+      const hit = branchCache.get(wanted);
       if (hit && Date.now() - hit.at < TTL_MS) {
-        req.deviceId = deviceId;
         req.branchId = hit.branchId;
         return next();
       }
 
       const { rows } = await pool.query(
-        `UPDATE devices SET last_seen_at = NOW()
-         WHERE device_id = $1
-         RETURNING branch_id`,
-        [deviceId]
+        `SELECT id FROM branches WHERE slug = $1 AND is_active`,
+        [wanted],
       );
-
       if (rows.length) {
-        cache.set(deviceId, { branchId: rows[0].branch_id, at: Date.now() });
-        req.deviceId = deviceId;
-        req.branchId = rows[0].branch_id;
+        branchCache.set(wanted, { branchId: rows[0].id, at: Date.now() });
+        req.branchId = rows[0].id;
+        return next();
+      }
+      if (slug) {
+        return res.status(404).json({ error: "UNKNOWN_BRANCH", slug });
+      }
+    }
+
+    // 2. Fall back to a registered device
+    if (deviceId) {
+      const cached = deviceCache.get(deviceId);
+      if (cached && Date.now() - cached.at < TTL_MS) {
+        req.branchId = cached.branchId;
         return next();
       }
 
-      return res.status(428).json({
-        error: "DEVICE_NOT_REGISTERED",
-        message: "This device is not registered to a branch.",
-        device_id: deviceId,
-      });
-    }
-
-    if (FALLBACK_SLUG) {
       const { rows } = await pool.query(
-        `SELECT id FROM branches WHERE slug = $1`,
-        [FALLBACK_SLUG]
+        `UPDATE devices SET last_seen_at = NOW()
+         WHERE device_id = $1 RETURNING branch_id`,
+        [deviceId],
       );
       if (rows.length) {
-        req.branchId = rows[0].id;
+        deviceCache.set(deviceId, { branchId: rows[0].branch_id, at: Date.now() });
+        req.branchId = rows[0].branch_id;
         return next();
       }
     }
 
     return res.status(428).json({
-      error: "DEVICE_NOT_REGISTERED",
-      message: "No device id supplied.",
+      error: "BRANCH_NOT_RESOLVED",
+      message: "No branch could be determined for this request.",
     });
   } catch (err) {
     console.error("resolveBranch", err);
