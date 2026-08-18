@@ -54,12 +54,11 @@ export async function createOrder(req: Request, res: Response) {
     await client.query("BEGIN");
 
     const ids = [...new Set(items.map((i) => i.menu_item_id))];
+    // branch_menu applies the branch's price override and offering
     const menuRes = await client.query(
-      `SELECT id, price
-       FROM menu_items
-       WHERE id = ANY($1::uuid[])
-       AND is_active = TRUE`,
-      [ids],
+      `SELECT id, price FROM branch_menu
+       WHERE id = ANY($1::uuid[]) AND branch_id = $2 AND is_active = TRUE`,
+      [ids, req.branchId],
     );
 
     const priceMap = new Map<string, number>();
@@ -69,10 +68,18 @@ export async function createOrder(req: Request, res: Response) {
       throw new Error("One or more menu items are invalid or inactive");
     }
 
+    if (waiter_id) {
+      const w = await client.query(
+        `SELECT 1 FROM waiters WHERE id = $1 AND branch_id = $2`,
+        [waiter_id, req.branchId],
+      );
+      if (!w.rows.length) throw new Error("Waiter does not belong to this branch");
+    }
+
     const orderResult = await client.query(
       `INSERT INTO orders
-      (waiter_id, created_by, serving_mode, device_id, local_id)
-      VALUES ($1, $2, $3, $4, $5)
+      (waiter_id, created_by, serving_mode, device_id, local_id, branch_id)
+      VALUES ($1, $2, $3, $4, $5, $6)
       ON CONFLICT (device_id, local_id)
       WHERE device_id IS NOT NULL AND local_id IS NOT NULL
       DO UPDATE SET updated_at = NOW()
@@ -81,8 +88,9 @@ export async function createOrder(req: Request, res: Response) {
         waiter_id || null,
         created_by,
         normalizedServingMode,
-        device_id || process.env.DEVICE_ID || null,
+        req.deviceId || device_id || null,
         local_id || null,
+        req.branchId,
       ],
     );
 
@@ -134,17 +142,18 @@ export async function createOrder(req: Request, res: Response) {
   }
 }
 
-export async function getActiveOrders(_: Request, res: Response) {
+export async function getActiveOrders(req: Request, res: Response) {
   try {
     const result = await pool.query(`
       SELECT o.*, w.name AS waiter_name
       FROM orders o
       LEFT JOIN waiters w ON w.id = o.waiter_id
       WHERE o.status = 'pending'
+        AND o.branch_id = $1
         AND (o.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Africa/Addis_Ababa')::date
             = (NOW() AT TIME ZONE 'Africa/Addis_Ababa')::date
       ORDER BY o.created_at ASC
-    `);
+    `, [req.branchId]);
 
     res.json(result.rows);
   } catch (err) {
@@ -153,17 +162,18 @@ export async function getActiveOrders(_: Request, res: Response) {
   }
 }
 
-export async function getActiveOrdersWithItems(_: Request, res: Response) {
+export async function getActiveOrdersWithItems(req: Request, res: Response) {
   try {
     const ordersResult = await pool.query(`
       SELECT o.*, w.name AS waiter_name
       FROM orders o
       LEFT JOIN waiters w ON w.id = o.waiter_id
       WHERE o.status = 'pending'
+        AND o.branch_id = $1
         AND (o.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Africa/Addis_Ababa')::date =
             (NOW() AT TIME ZONE 'Africa/Addis_Ababa')::date
       ORDER BY o.created_at DESC
-    `);
+    `, [req.branchId]);
 
     const orders = ordersResult.rows;
 
@@ -236,18 +246,19 @@ export async function getOrderById(req: Request, res: Response) {
   }
 }
 
-export async function getOrdersWithItems(_: Request, res: Response) {
+export async function getOrdersWithItems(req: Request, res: Response) {
   try {
     const ordersResult = await pool.query(`
       SELECT o.*, w.name AS waiter_name
       FROM orders o
       LEFT JOIN waiters w ON w.id = o.waiter_id
       WHERE o.status = 'pending'
+        AND o.branch_id = $1
         AND (o.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Africa/Addis_Ababa')::date
             = (NOW() AT TIME ZONE 'Africa/Addis_Ababa')::date
       ORDER BY o.created_at DESC
       LIMIT 500
-    `);
+    `, [req.branchId]);
 
     const orders = ordersResult.rows;
 
@@ -319,11 +330,12 @@ export async function getCompletedOrdersByDay(req: Request, res: Response) {
       FROM orders o
       LEFT JOIN waiters w ON w.id = o.waiter_id
       WHERE o.status = ANY($3::text[])
+        AND o.branch_id = $4
         AND o.created_at >= $1
         AND o.created_at <= $2
       ORDER BY o.created_at DESC
       `,
-      [start, end, statuses],
+      [start, end, statuses, req.branchId],
     );
 
     const orders = ordersResult.rows;
@@ -388,8 +400,8 @@ export async function updateOrderStatus(req: Request, res: Response) {
 
   try {
     const existing = await pool.query(
-      `SELECT id, status FROM orders WHERE id = $1`,
-      [req.params.id],
+      `SELECT id, status FROM orders WHERE id = $1 AND branch_id = $2`,
+      [req.params.id, req.branchId],
     );
 
     if (!existing.rows.length) {

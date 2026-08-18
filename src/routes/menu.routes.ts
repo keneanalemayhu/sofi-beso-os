@@ -9,10 +9,11 @@ import {
   toggleMenuItem,
   deleteMenuItem,
 } from "../controllers/menu.controller";
+import { resolveBranch } from "../middleware/branch";
 
 const router = Router();
 
-router.get("/", getMenu);
+router.get("/", resolveBranch, getMenu);
 router.get("/all", getAllMenuItems);
 router.post("/", createMenuItem);
 router.patch("/:id/toggle", toggleMenuItem);

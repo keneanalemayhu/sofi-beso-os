@@ -3,15 +3,15 @@
 import { Request, Response } from "express";
 import { pool } from "../db";
 
-export async function getMenu(_: Request, res: Response) {
+export async function getMenu(req: Request, res: Response) {
   try {
-    const result = await pool.query(`
-      SELECT m.*, c.name AS category_name
-      FROM menu_items m
-      JOIN categories c ON m.category_id = c.id
-      WHERE m.is_active = TRUE
-      ORDER BY c.name, m.name
-    `);
+    const result = await pool.query(
+      `SELECT id, category_id, category_name, name, price, is_active, created_at
+       FROM branch_menu
+       WHERE branch_id = $1 AND is_active = TRUE
+       ORDER BY category_name, name`,
+      [req.branchId]
+    );
 
     res.json(result.rows);
   } catch (err) {

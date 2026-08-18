@@ -1,19 +1,42 @@
 sofi-beso-os/
+├── migrations/
+│   ├── 000_baseline.sql
+│   ├── 001_finance.sql
+│   ├── 002_finance_support.sql
+│   ├── 003_revenue_from_orders.sql
+│   ├── 004_simplify_order_status.sql
+│   ├── 005_staff_roles.sql
+│   └── 006_pos_branches.sql
+├── printer/
+│   └── print_image.py
 ├── src/
 │   ├── controllers/
 │   │   ├── analytics.controller.ts
+│   │   ├── category.controller.ts
+│   │   ├── expense.controller.ts
 │   │   ├── menu.controller.ts
 │   │   ├── order.controller.ts
-│   │   ├── payment.controller.ts
+│   │   ├── savings.controller.ts
 │   │   ├── sync.controller.ts
+│   │   ├── wage.controller.ts
 │   │   └── waiter.controller.ts
+│   ├── middleware/
+│   │   └── branch.ts
 │   ├── routes/
 │   │   ├── analytics.routes.ts
+│   │   ├── category.routes.ts
+│   │   ├── expense.routes.ts
 │   │   ├── menu.routes.ts
 │   │   ├── order.routes.ts
-│   │   ├── payment.routes.ts
+│   │   ├── savings.routes.ts
 │   │   ├── sync.routes.ts
+│   │   ├── wage.routes.ts
 │   │   └── waiter.routes.ts
+│   ├── services/
+│   │   └── print.service.ts
+│   ├── utils/
+│   │   ├── ethiopian-date.ts
+│   │   └── http.ts
 │   ├── app.ts
 │   ├── db.ts
 │   ├── server.ts

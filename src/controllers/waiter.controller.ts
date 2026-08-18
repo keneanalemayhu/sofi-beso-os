@@ -3,14 +3,15 @@
 import { Request, Response } from "express";
 import { pool } from "../db";
 
-export async function getWaiters(_: Request, res: Response) {
+export async function getWaiters(req: Request, res: Response) {
   try {
-    const result = await pool.query(`
-      SELECT id, name, is_active, role, created_at
-      FROM waiters
-      WHERE is_active = TRUE AND role = 'waiter'
-      ORDER BY name
-    `);
+    const result = await pool.query(
+      `SELECT id, name, is_active, role, created_at
+       FROM waiters
+       WHERE is_active = TRUE AND role = 'waiter' AND branch_id = $1
+       ORDER BY name`,
+      [req.branchId]
+    );
 
     res.json(result.rows);
   } catch (err) {
@@ -34,7 +35,11 @@ export async function getAllWaiters(_: Request, res: Response) {
 }
 
 export async function createWaiter(req: Request, res: Response) {
-  const { name, role } = req.body as { name?: string; role?: string };
+  const { name, role, branch_id } = req.body as {
+    name?: string;
+    role?: string;
+    branch_id?: string;
+  };
   const trimmed = name?.trim();
   if (!trimmed) {
     return res.status(400).json({ error: "Staff name is required" });
@@ -47,16 +52,18 @@ export async function createWaiter(req: Request, res: Response) {
 
   try {
     const result = await pool.query(
-      `INSERT INTO waiters (name, role) VALUES ($1, COALESCE($2, 'waiter'))
-       RETURNING id, name, is_active, role, created_at`,
-      [trimmed, role || null],
+      `INSERT INTO waiters (name, role, branch_id)
+       VALUES ($1, COALESCE($2, 'waiter'),
+               COALESCE($3::uuid, (SELECT id FROM branches WHERE slug = 'main')))
+       RETURNING id, name, is_active, role, branch_id, created_at`,
+      [trimmed, role || null, branch_id || null],
     );
     res.status(201).json(result.rows[0]);
   } catch (err: any) {
     if (err?.code === "23505") {
       return res
         .status(409)
-        .json({ error: "A waiter with this name already exists" });
+        .json({ error: "Someone with this name already exists at this branch" });
     }
     console.error(err);
     res.status(500).json({ error: "Failed to create waiter" });
@@ -110,7 +117,7 @@ export async function updateWaiter(req: Request, res: Response) {
     if (err?.code === "23505") {
       return res
         .status(409)
-        .json({ error: "A waiter with this name already exists" });
+        .json({ error: "Someone with this name already exists at this branch" });
     }
     console.error(err);
     res.status(500).json({ error: "Failed to update waiter" });
