@@ -36,11 +36,13 @@ export async function getAllMenuItems(_: Request, res: Response) {
 }
 
 export async function createMenuItem(req: Request, res: Response) {
-  const { category_id, name, price, is_active } = req.body as {
+  const { category_id, name, price, is_active, branch_ids } = req.body as {
     category_id?: string;
     name?: string;
     price?: number;
     is_active?: boolean;
+    /** Branches that will offer this item. Omit for all active branches. */
+    branch_ids?: string[];
   };
   const trimmedName = name?.trim();
   if (!category_id || !trimmedName || typeof price !== "number" || price < 0) {
@@ -54,6 +56,15 @@ export async function createMenuItem(req: Request, res: Response) {
        VALUES ($1, $2, $3, $4)
        RETURNING id`,
       [category_id, trimmedName, price, is_active ?? true],
+    );
+
+    // An item is only sold where a branch offering exists
+    await pool.query(
+      `INSERT INTO branch_menu_items (branch_id, menu_item_id)
+       SELECT b.id, $1 FROM branches b
+       WHERE b.is_active
+         AND ($2::uuid[] IS NULL OR b.id = ANY($2::uuid[]))`,
+      [inserted.rows[0].id, branch_ids?.length ? branch_ids : null],
     );
     const withCat = await pool.query(
       `SELECT m.*, c.name AS category_name
