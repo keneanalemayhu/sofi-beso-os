@@ -5,9 +5,10 @@
 -- one level, so the eight main sections become the categories and the
 -- sub-sections are dropped.
 --
--- ትኩስ መጠጦች is shared with Main because categories.name is globally unique.
--- Items whose names collide there (ሻይ, ቀሽር) reuse Main's catalog rows with a
--- price_override rather than creating duplicates.
+-- Imperial's hot drinks get their own category so no catalog rows are shared
+-- with Main. Sharing them meant the admin Items page showed Main's price for
+-- Imperial's items, which led to staff duplicating them into an invented
+-- category on 2026-08-21.
 --
 -- Catalog rows left orphaned by the old menu are removed at the end, except
 -- any that appear in past orders.
@@ -32,7 +33,7 @@ INSERT INTO categories (name) VALUES
     ('የበሶ ምርጫዎች'),
     ('የተልባ ምርጫዎች'),
     ('የአብሽ ምርጫዎች'),
-    ('ትኩስ መጠጦች'),
+    ('የትኩስ መጠጥ ምርጫዎች'),
     ('ቀዝቃዛ መጠጦች')
 ON CONFLICT (name) DO NOTHING;
 
@@ -143,20 +144,21 @@ INSERT INTO imperial_menu (cat, item, price) VALUES
 ('የአብሽ ምርጫዎች', 'አብሽ በለውዝ',             130),
 ('የአብሽ ምርጫዎች', 'አብሽ ልዩ (በማር፣ በወተት)',   150),
 
--- ትኩስ መጠጦች (shared category with Main; ሻይ and ቀሽር reuse Main's rows)
-('ትኩስ መጠጦች', 'ቡና የጀበና',      40),
-('ትኩስ መጠጦች', 'ቡና የማሽን',      90),
-('ትኩስ መጠጦች', 'ሻይ',           30),
-('ትኩስ መጠጦች', 'ሻይ በማር',       60),
-('ትኩስ መጠጦች', 'አስፕሪስ',        60),
-('ትኩስ መጠጦች', 'ለዉዝ ሻይ',       80),
-('ትኩስ መጠጦች', 'ወተት',          90),
-('ትኩስ መጠጦች', 'ቀሽር',          30),
-('ትኩስ መጠጦች', 'ማክያቶ የፆም',     80),
-('ትኩስ መጠጦች', 'ማካያቶ',         80),
-('ትኩስ መጠጦች', 'ስፔሻል ሻይ',     110),
-('ትኩስ መጠጦች', 'ብርቱካን ሻይ',     80),
-('ትኩስ መጠጦች', 'ሎሚ ሻይ',        80),
+-- የትኩስ መጠጥ ምርጫዎች — Imperial's own category, so no rows are shared with
+-- Main and the admin Items page shows Imperial's real prices.
+('የትኩስ መጠጥ ምርጫዎች', 'ቡና የጀበና',      40),
+('የትኩስ መጠጥ ምርጫዎች', 'ቡና የማሽን',      90),
+('የትኩስ መጠጥ ምርጫዎች', 'ሻይ',           30),
+('የትኩስ መጠጥ ምርጫዎች', 'ሻይ በማር',       60),
+('የትኩስ መጠጥ ምርጫዎች', 'አስፕሪስ',        60),
+('የትኩስ መጠጥ ምርጫዎች', 'ለዉዝ ሻይ',       80),
+('የትኩስ መጠጥ ምርጫዎች', 'ወተት',          90),
+('የትኩስ መጠጥ ምርጫዎች', 'ቀሽር',          30),
+('የትኩስ መጠጥ ምርጫዎች', 'ማክያቶ የፆም',     80),
+('የትኩስ መጠጥ ምርጫዎች', 'ማካያቶ',         80),
+('የትኩስ መጠጥ ምርጫዎች', 'ስፔሻል ሻይ',     110),
+('የትኩስ መጠጥ ምርጫዎች', 'ብርቱካን ሻይ',     80),
+('የትኩስ መጠጥ ምርጫዎች', 'ሎሚ ሻይ',        80),
 
 -- ቀዝቃዛ መጠጦች
 ('ቀዝቃዛ መጠጦች', 'ውሃ (ግማሽ ሊትር)',   30),
