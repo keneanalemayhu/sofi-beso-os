@@ -20,14 +20,18 @@ export async function getMenu(req: Request, res: Response) {
   }
 }
 
-export async function getAllMenuItems(_: Request, res: Response) {
+export async function getAllMenuItems(req: Request, res: Response) {
   try {
-    const result = await pool.query(`
-      SELECT m.*, c.name AS category_name
-      FROM menu_items m
-      JOIN categories c ON m.category_id = c.id
-      ORDER BY c.name, m.name
-    `);
+    const includeArchived = req.query.archived === "true";
+
+    const result = await pool.query(
+      `SELECT m.*, c.name AS category_name
+       FROM menu_items m
+       JOIN categories c ON m.category_id = c.id
+       WHERE ($1::boolean OR m.archived_at IS NULL)
+       ORDER BY c.name, m.name`,
+      [includeArchived]
+    );
     res.json(result.rows);
   } catch (err) {
     console.error(err);
