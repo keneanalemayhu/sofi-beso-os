@@ -119,24 +119,27 @@ export async function overviewAnalytics(req: Request, res: Response) {
       `
       ${bounds}
       SELECT
-        COUNT(o.id)::int AS order_count,
-        COALESCE(SUM(o.total_amount), 0)::float AS total_sales,
-        COALESCE(
-          (
-            SELECT SUM(oi.quantity)
-            FROM order_items oi
-            JOIN orders o2 ON o2.id = oi.order_id
-            WHERE o2.status <> 'voided'
-              AND o2.created_at >= b.start_utc
-              AND o2.created_at < b.end_utc
-          ),
-          0
-        )::int AS items_sold
-      FROM boundaries b
-      LEFT JOIN orders o
-        ON o.status <> 'voided'
-       AND o.created_at >= b.start_utc
-       AND o.created_at < b.end_utc
+        (
+          SELECT COUNT(*)::int
+          FROM orders o
+          CROSS JOIN boundaries b
+          WHERE ${orderFilter}
+        ) AS order_count,
+
+        (
+          SELECT COALESCE(SUM(o.total_amount), 0)::float
+          FROM orders o
+          CROSS JOIN boundaries b
+          WHERE ${orderFilter}
+        ) AS total_sales,
+
+        (
+          SELECT COALESCE(SUM(oi.quantity), 0)::int
+          FROM order_items oi
+          JOIN orders o ON o.id = oi.order_id
+          CROSS JOIN boundaries b
+          WHERE ${orderFilter}
+        ) AS items_sold
       `,
       params,
     );
