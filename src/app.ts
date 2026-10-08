@@ -13,6 +13,7 @@ import expenseRoutes from "./routes/expense.routes";
 import savingsRoutes from "./routes/savings.routes";
 import wageRoutes from "./routes/wage.routes";
 import branchRoutes from "./routes/branch.routes";
+import settlementRoutes from "./routes/settlement.routes";
 
 export function createApp() {
   const app = express();
@@ -31,7 +32,7 @@ export function createApp() {
         return callback(new Error(`Origin ${origin} not allowed by CORS`));
       },
       credentials: true,
-    })
+    }),
   );
 
   app.use(express.json());
@@ -46,6 +47,9 @@ export function createApp() {
   app.use("/wages", wageRoutes);
   app.use("/branches", branchRoutes);
   app.use("/sync", syncRoutes);
+  app.use("/expenses", expenseRoutes);
+  app.use("/savings", savingsRoutes);
+  app.use("/settlements", settlementRoutes);
 
   app.get("/health", (_, res) => res.json({ ok: true }));
 
