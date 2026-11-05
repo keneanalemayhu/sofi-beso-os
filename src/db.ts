@@ -2,20 +2,15 @@
 
 import { Pool, types } from "pg";
 import dotenv from "dotenv";
+import { poolConfigFromEnv } from "./config";
 
 dotenv.config();
 types.setTypeParser(1082, (val) => val);
 
-const useSSL = process.env.DB_SSL === "true";
+/** Anything a query can run on: the pool or a checked-out client. */
+export type Queryable = Pick<Pool, "query">;
 
-export const pool = new Pool({
-  user: process.env.DB_USER,
-  host: process.env.DB_HOST,
-  database: process.env.DB_NAME,
-  password: process.env.DB_PASSWORD,
-  port: Number(process.env.DB_PORT || 5432),
-  ssl: useSSL ? { rejectUnauthorized: false } : undefined,
-});
+export const pool = new Pool(poolConfigFromEnv());
 
 pool.on("error", (err) => {
   console.error("Unexpected PG pool error", err);
