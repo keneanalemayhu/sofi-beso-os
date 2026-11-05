@@ -9,7 +9,9 @@ sofi-beso-os/
 │   ├── 006_pos_branches.sql
 │   ├── 007_imperial_menu.sql
 │   ├── 008_imperial_menu_v2.sql
-│   └── 009_archive_menu_items.sql
+│   ├── 009_archive_menu_items.sql
+│   ├── 010_waiter_settlements.sql
+│   └── 011_orders_completed_status.sql
 ├── printer/
 │   └── print_image.py
 ├── src/
@@ -21,6 +23,7 @@ sofi-beso-os/
 │   │   ├── menu.controller.ts
 │   │   ├── order.controller.ts
 │   │   ├── savings.controller.ts
+│   │   ├── settlement.controller.ts
 │   │   ├── sync.controller.ts
 │   │   ├── wage.controller.ts
 │   │   └── waiter.controller.ts
@@ -34,19 +37,33 @@ sofi-beso-os/
 │   │   ├── menu.routes.ts
 │   │   ├── order.routes.ts
 │   │   ├── savings.routes.ts
+│   │   ├── settlement.routes.ts
 │   │   ├── sync.routes.ts
 │   │   ├── wage.routes.ts
 │   │   └── waiter.routes.ts
 │   ├── services/
+│   │   ├── orders.service.ts
 │   │   └── print.service.ts
 │   ├── utils/
 │   │   ├── ethiopian-date.ts
 │   │   └── http.ts
 │   ├── app.ts
+│   ├── config.ts
 │   ├── db.ts
+│   ├── errors.ts
 │   ├── server.ts
-│   └── sync-worker.ts
+│   ├── sync-worker.ts
+│   └── validation.ts
+├── test/
+│   ├── helpers.ts
+│   ├── migrations.test.ts
+│   ├── orders.test.ts
+│   └── validation.test.ts
+├── .env.example
 ├── .gitignore
+├── README.md
 ├── database.sql
 ├── package.json
-└── tsconfig.json
+├── structure.txt
+├── tsconfig.json
+└── tsconfig.test.json

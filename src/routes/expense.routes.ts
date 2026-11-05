@@ -1,9 +1,13 @@
 // src/routes/expense.routes.ts
 
 import { Router } from "express";
+import { validateIdParam } from "../validation";
 import * as ctrl from "../controllers/expense.controller";
 
 const router = Router();
+
+// A malformed id is a 400, not a database error.
+router.param("id", validateIdParam);
 
 // Static paths first so they aren't swallowed by /:id
 router.get("/categories", ctrl.listCategories);
