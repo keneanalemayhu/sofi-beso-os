@@ -4,3 +4,7 @@ build-test/
 .env
 *.log
 .DS_Store
+
+# deploy/update.sh
+deploy/.state/
+deploy/backups/
