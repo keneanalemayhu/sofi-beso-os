@@ -33,39 +33,28 @@ npm start                # never `npm run dev` in production
 On the server, from the repo folder:
 
 ```bash
-deploy/update.sh
+./deploy/update.sh
 ```
 
-The script:
+It runs these steps in order, and stops at the first one that fails:
 
-1. Pulls the latest commit of the checked-out branch.
-2. Installs packages if they changed.
-3. Builds the app.
-4. Backs up the database and runs any new migrations, after asking you.
-5. Restarts the `sofi-beso-os` pm2 process or systemd service, then checks `/health`.
+1. Pulls the checked-out branch, trying again if GitHub refuses for a moment.
+2. Runs `npm ci` and `npm run build`.
+3. Runs any new migrations, after taking a backup into `deploy/backups/`.
+4. Runs `pm2 reload sofi-beso-backend`.
 
-If the build or a migration fails, it puts the previous version back and does
-not restart the app. `deploy/update.sh --rollback` returns to the version that
-ran before the last update; database changes are not undone. Run
-`deploy/update.sh --help` for all options. The cashier (`sofi-beso`) and admin
-(`sofi-beso-admin`) repos have the same script, minus the database steps.
-
-**First time on each server:** get the script with `git pull`, then run it.
-It asks for the number of the last migration you already applied by hand, and
-records the earlier ones as done. Without a terminal, pass the number
-directly: `deploy/update.sh --baseline=010`.
-
-The script needs `git`, `npm`, and `psql` / `pg_dump`
-(`sudo apt install postgresql-client`) on the server.
+The cashier (`sofi-beso-frontend`) and admin (`sofi-beso-admin`) repos have
+the same script, minus the migrations.
 
 ### Migrations
 
 `migrations/` holds numbered SQL files. Each one wraps itself in
-`BEGIN/COMMIT`. `deploy/update.sh` runs each file once per database and
-records it in the `schema_migrations` table. To run one by hand:
+`BEGIN/COMMIT`. `deploy/update.sh` runs each file once and records it in the
+`schema_migrations` table. If you run one by hand, record it too:
 
 ```bash
-psql "$DATABASE_URL" -f migrations/011_orders_completed_status.sql
+psql -f migrations/012_example.sql
+psql -c "INSERT INTO schema_migrations (name) VALUES ('012_example.sql')"
 ```
 
 Never edit a migration that has already run; add a new file instead.
