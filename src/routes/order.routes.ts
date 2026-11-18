@@ -1,6 +1,7 @@
-// src/routes/orders.routes.ts
+// src/routes/order.routes.ts
 
 import { Router } from "express";
+import { validateIdParam } from "../validation";
 import {
   createOrder,
   getActiveOrders,
@@ -15,6 +16,9 @@ import {
 import { resolveBranch } from "../middleware/branch";
 
 const router = Router();
+
+// A malformed id is a 400, not a database error.
+router.param("id", validateIdParam);
 
 // POS routes — branch resolved from the tablet's device id
 router.get("/", resolveBranch, getActiveOrders);

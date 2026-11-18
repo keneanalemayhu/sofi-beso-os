@@ -94,10 +94,11 @@ export async function receiveOrders(req: Request, res: Response) {
           order.serving_mode || "individual",
           order.device_id,
           order.local_id,
-          order.status,
+          // Older devices still send the pre-011 name for a placed order.
+          order.status === "pending" ? "completed" : order.status,
           order.total_amount,
           order.created_at,
-          order.completed_at,
+          order.completed_at ?? order.created_at,
           order.voided_at,
           order.voided_by,
           order.void_reason,

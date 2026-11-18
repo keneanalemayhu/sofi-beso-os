@@ -1,581 +1,181 @@
 // src/controllers/order.controller.ts
+//
+// An order is done the moment it is placed (the ticket is printed). The
+// only change afterwards is voiding. Errors thrown here are turned into
+// safe JSON responses by errorHandler (src/errors.ts).
 
 import { Request, Response } from "express";
-import { pool } from "../db";
 import type { Server as IOServer } from "socket.io";
+import { pool } from "../db";
+import { HttpError } from "../errors";
 import { printOrderReceipt } from "../services/print.service";
-
-type OrderItemInput = {
-  menu_item_id: string;
-  quantity: number;
-  comment?: string | null;
-};
+import * as orders from "../services/orders.service";
+import { param } from "../utils/http";
+import {
+  parseCreateOrder,
+  parseVoidReason,
+  requireDay,
+  requireUuid,
+} from "../validation";
 
 function getIO(req: Request): IOServer | undefined {
   return req.app.locals.io as IOServer | undefined;
 }
 
-const ALLOWED_SERVING_MODES = ["individual", "shared_tray"] as const;
-type ServingMode = (typeof ALLOWED_SERVING_MODES)[number];
+function emit(req: Request, event: string, payload: unknown) {
+  try {
+    getIO(req)?.emit(event, payload);
+  } catch (err) {
+    console.error(`socket emit "${event}" failed:`, err);
+  }
+}
+
+function branchOf(req: Request): string {
+  if (!req.branchId) throw new HttpError(428, "BRANCH_NOT_RESOLVED");
+  return req.branchId;
+}
 
 export async function createOrder(req: Request, res: Response) {
-  const { waiter_id, created_by, serving_mode, device_id, local_id, items } =
-    req.body as {
-      waiter_id?: string | null;
-      created_by: string;
-      serving_mode?: ServingMode;
-      device_id?: string;
-      local_id?: string;
-      items: OrderItemInput[];
-    };
+  const input = parseCreateOrder(req.body);
+  if (req.deviceId) input.device_id = req.deviceId;
 
-  const normalizedServingMode: ServingMode = serving_mode ?? "individual";
+  const { order, items, duplicate } = await orders.createOrder(
+    pool,
+    branchOf(req),
+    input,
+  );
 
-  if (!created_by || !Array.isArray(items) || items.length === 0) {
-    return res.status(400).json({ error: "Invalid order data" });
-  }
-
-  if (!ALLOWED_SERVING_MODES.includes(normalizedServingMode)) {
-    return res.status(400).json({ error: "Invalid serving_mode" });
-  }
-
-  for (const it of items) {
-    if (
-      !it?.menu_item_id ||
-      typeof it.quantity !== "number" ||
-      it.quantity <= 0
-    ) {
-      return res.status(400).json({ error: "Invalid order items" });
-    }
-  }
-
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-
-    const ids = [...new Set(items.map((i) => i.menu_item_id))];
-    // branch_menu applies the branch's price override and offering
-    const menuRes = await client.query(
-      `SELECT id, price FROM branch_menu
-       WHERE id = ANY($1::uuid[]) AND branch_id = $2 AND is_active = TRUE`,
-      [ids, req.branchId],
-    );
-
-    const priceMap = new Map<string, number>();
-    for (const row of menuRes.rows) priceMap.set(row.id, Number(row.price));
-
-    if (priceMap.size !== ids.length) {
-      throw new Error("One or more menu items are invalid or inactive");
-    }
-
-    if (waiter_id) {
-      const w = await client.query(
-        `SELECT 1 FROM waiters WHERE id = $1 AND branch_id = $2`,
-        [waiter_id, req.branchId],
-      );
-      if (!w.rows.length) throw new Error("Waiter does not belong to this branch");
-    }
-
-    const orderResult = await client.query(
-      `INSERT INTO orders
-      (waiter_id, created_by, serving_mode, device_id, local_id, branch_id)
-      VALUES ($1, $2, $3, $4, $5, $6)
-      ON CONFLICT (device_id, local_id)
-      WHERE device_id IS NOT NULL AND local_id IS NOT NULL
-      DO UPDATE SET updated_at = NOW()
-      RETURNING *`,
-      [
-        waiter_id || null,
-        created_by,
-        normalizedServingMode,
-        req.deviceId || device_id || null,
-        local_id || null,
-        req.branchId,
-      ],
-    );
-
-    const order = orderResult.rows[0];
-    let total = 0;
-
-    for (const item of items) {
-      const price = priceMap.get(item.menu_item_id)!;
-      total += price * item.quantity;
-
-      await client.query(
-        `INSERT INTO order_items
-         (order_id, menu_item_id, quantity, price_at_time, comment)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [
-          order.id,
-          item.menu_item_id,
-          item.quantity,
-          price,
-          item.comment || null,
-        ],
-      );
-    }
-
-    await client.query(`UPDATE orders SET total_amount = $1 WHERE id = $2`, [
-      total,
-      order.id,
-    ]);
-
-    await client.query("COMMIT");
-
-    getIO(req)?.emit("new_order", {
+  // The whole order goes out, so screens can add it without refetching.
+  if (!duplicate) {
+    emit(req, "new_order", {
       orderId: order.id,
-      serving_mode: normalizedServingMode,
-    });
-
-    res.json({
-      success: true,
-      orderId: order.id,
-      total,
-      serving_mode: normalizedServingMode,
-    });
-  } catch (err) {
-    await client.query("ROLLBACK");
-    console.error(err);
-    res.status(500).json({ error: "Failed to create order" });
-  } finally {
-    client.release();
-  }
-}
-
-export async function getActiveOrders(req: Request, res: Response) {
-  try {
-    const result = await pool.query(`
-      SELECT o.*, w.name AS waiter_name
-      FROM orders o
-      LEFT JOIN waiters w ON w.id = o.waiter_id
-      WHERE o.status = 'pending'
-        AND o.branch_id = $1
-        AND (o.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Africa/Addis_Ababa')::date
-            = (NOW() AT TIME ZONE 'Africa/Addis_Ababa')::date
-      ORDER BY o.created_at ASC
-    `, [req.branchId]);
-
-    res.json(result.rows);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to fetch orders" });
-  }
-}
-
-export async function getActiveOrdersWithItems(req: Request, res: Response) {
-  try {
-    const ordersResult = await pool.query(`
-      SELECT o.*, w.name AS waiter_name
-      FROM orders o
-      LEFT JOIN waiters w ON w.id = o.waiter_id
-      WHERE o.status = 'pending'
-        AND o.branch_id = $1
-        AND (o.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Africa/Addis_Ababa')::date =
-            (NOW() AT TIME ZONE 'Africa/Addis_Ababa')::date
-      ORDER BY o.created_at DESC
-    `, [req.branchId]);
-
-    const orders = ordersResult.rows;
-
-    if (orders.length === 0) {
-      return res.json([]);
-    }
-
-    const orderIds = orders.map((o) => o.id);
-
-    const itemsResult = await pool.query(
-      `SELECT
-         oi.*,
-         m.name
-       FROM order_items oi
-       JOIN menu_items m ON oi.menu_item_id = m.id
-       WHERE oi.order_id = ANY($1::uuid[])
-       ORDER BY oi.created_at ASC`,
-      [orderIds],
-    );
-
-    const itemsByOrderId = new Map<string, any[]>();
-
-    for (const item of itemsResult.rows) {
-      if (!itemsByOrderId.has(item.order_id)) {
-        itemsByOrderId.set(item.order_id, []);
-      }
-      itemsByOrderId.get(item.order_id)!.push(item);
-    }
-
-    const payload = orders.map((order) => ({
+      serving_mode: order.serving_mode,
       order,
-      items: itemsByOrderId.get(order.id) || [],
-    }));
-
-    res.json(payload);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to fetch active orders" });
+      items,
+    });
   }
+
+  res.json({
+    success: true,
+    orderId: order.id,
+    total: Number(order.total_amount),
+    serving_mode: order.serving_mode,
+    duplicate,
+    order,
+    items,
+  });
+}
+
+/** GET /orders — today's orders for this branch, oldest first, no items. */
+export async function getActiveOrders(req: Request, res: Response) {
+  res.json(
+    await orders.listTodayOrders(pool, branchOf(req), { newestFirst: false }),
+  );
+}
+
+/** GET /orders/active-with-items — today's orders with items, newest first. */
+export async function getActiveOrdersWithItems(req: Request, res: Response) {
+  res.json(await orders.listTodayOrdersWithItems(pool, branchOf(req)));
+}
+
+/** GET /orders/with-items — same as active-with-items (kept for old screens). */
+export async function getOrdersWithItems(req: Request, res: Response) {
+  res.json(await orders.listTodayOrdersWithItems(pool, branchOf(req)));
+}
+
+/**
+ * GET /orders/completed-by-day?day=YYYY-MM-DD&includeVoided=true
+ * Completed orders of that day, or only the voided ones when includeVoided
+ * is "true" (what the history screen's "show voided" toggle expects).
+ */
+export async function getCompletedOrdersByDay(req: Request, res: Response) {
+  if (!req.query.day) throw new HttpError(400, "day query param is required");
+  const day = requireDay(req.query.day, "day");
+  const voidedOnly = req.query.includeVoided === "true";
+  res.json(await orders.listOrdersByDay(pool, branchOf(req), day, voidedOnly));
 }
 
 export async function getOrderById(req: Request, res: Response) {
-  try {
-    const order = await pool.query(
-      `
-      SELECT o.*, w.name AS waiter_name
-      FROM orders o
-      LEFT JOIN waiters w ON w.id = o.waiter_id
-      WHERE o.id = $1
-      `,
-      [req.params.id],
-    );
-
-    if (!order.rows.length) {
-      return res.status(404).json({ error: "Order not found" });
-    }
-
-    const items = await pool.query(
-      `SELECT oi.*, m.name
-       FROM order_items oi
-       JOIN menu_items m ON oi.menu_item_id = m.id
-       WHERE oi.order_id = $1`,
-      [req.params.id],
-    );
-
-    res.json({ order: order.rows[0], items: items.rows });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to fetch order" });
-  }
+  res.json(await orders.getOrderWithItems(pool, param(req.params.id)));
 }
 
-export async function getOrdersWithItems(req: Request, res: Response) {
-  try {
-    const ordersResult = await pool.query(`
-      SELECT o.*, w.name AS waiter_name
-      FROM orders o
-      LEFT JOIN waiters w ON w.id = o.waiter_id
-      WHERE o.status = 'pending'
-        AND o.branch_id = $1
-        AND (o.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Africa/Addis_Ababa')::date
-            = (NOW() AT TIME ZONE 'Africa/Addis_Ababa')::date
-      ORDER BY o.created_at DESC
-      LIMIT 500
-    `, [req.branchId]);
-
-    const orders = ordersResult.rows;
-
-    if (orders.length === 0) {
-      return res.json([]);
-    }
-
-    const orderIds = orders.map((o) => o.id);
-
-    const itemsResult = await pool.query(
-      `SELECT
-         oi.*,
-         m.name
-       FROM order_items oi
-       JOIN menu_items m ON oi.menu_item_id = m.id
-       WHERE oi.order_id = ANY($1::uuid[])
-       ORDER BY oi.created_at ASC`,
-      [orderIds],
-    );
-
-    const itemsByOrderId = new Map<string, any[]>();
-
-    for (const item of itemsResult.rows) {
-      if (!itemsByOrderId.has(item.order_id)) {
-        itemsByOrderId.set(item.order_id, []);
-      }
-      itemsByOrderId.get(item.order_id)!.push(item);
-    }
-
-    const payload = orders.map((order) => ({
-      order,
-      items: itemsByOrderId.get(order.id) || [],
-    }));
-
-    res.json(payload);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to fetch orders" });
-  }
-}
-
-export async function getCompletedOrdersByDay(req: Request, res: Response) {
-  const { day, includeVoided } = req.query as {
-    day?: string;
-    includeVoided?: string;
-  };
-
-  const statuses =
-    includeVoided === "true"
-      ? ["voided"]
-      : ["pending"];
-
-  if (!day) {
-    return res.status(400).json({ error: "day query param is required" });
-  }
-
-  // expects YYYY-MM-DD
-  const start = new Date(`${day}T00:00:00+03:00`);
-  const end = new Date(`${day}T23:59:59.999+03:00`);
-
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-    return res.status(400).json({ error: "Invalid day format. Use YYYY-MM-DD" });
-  }
-
-  try {
-    const ordersResult = await pool.query(
-      `
-      SELECT o.*, w.name AS waiter_name
-      FROM orders o
-      LEFT JOIN waiters w ON w.id = o.waiter_id
-      WHERE o.status = ANY($3::text[])
-        AND o.branch_id = $4
-        AND o.created_at >= $1
-        AND o.created_at <= $2
-      ORDER BY o.created_at DESC
-      `,
-      [start, end, statuses, req.branchId],
-    );
-
-    const orders = ordersResult.rows;
-
-    if (orders.length === 0) {
-      return res.json([]);
-    }
-
-    const orderIds = orders.map((o) => o.id);
-
-    const itemsResult = await pool.query(
-      `
-      SELECT
-        oi.*,
-        m.name
-      FROM order_items oi
-      JOIN menu_items m ON oi.menu_item_id = m.id
-      WHERE oi.order_id = ANY($1::uuid[])
-      ORDER BY oi.created_at ASC
-      `,
-      [orderIds],
-    );
-
-    const itemsByOrderId = new Map<string, any[]>();
-
-    for (const item of itemsResult.rows) {
-      if (!itemsByOrderId.has(item.order_id)) {
-        itemsByOrderId.set(item.order_id, []);
-      }
-      itemsByOrderId.get(item.order_id)!.push(item);
-    }
-
-    const payload = orders.map((order) => ({
-      order,
-      items: itemsByOrderId.get(order.id) || [],
-    }));
-
-    return res.json(payload);
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: "Failed to fetch completed orders by day" });
-  }
-}
-
+/**
+ * PATCH /orders/:id/status
+ *   { "status": "voided", "voided_by": "<user id>", "void_reason": "..." }
+ *
+ * "completed" (or the old "pending") is accepted as a no-op on an order
+ * that is not voided. A voided order cannot be changed back.
+ */
 export async function updateOrderStatus(req: Request, res: Response) {
-  const { status, voided_by, void_reason } = req.body as {
-    status?: string;
-    voided_by?: string;
-    void_reason?: string;
-  };
-  const allowed = ["pending", "voided"];
+  const id = param(req.params.id);
+  const branchId = branchOf(req);
+  const body = (req.body ?? {}) as Record<string, unknown>;
 
-  if (!status || !allowed.includes(status)) {
-    return res.status(400).json({ error: "Invalid status" });
+  if (body.status === "completed" || body.status === "pending") {
+    const { order } = await orders.getOrderWithItems(pool, id);
+    if (order.branch_id !== branchId) throw new HttpError(404, "Order not found");
+    if (order.status === "voided") {
+      throw new HttpError(409, "Voided orders cannot be changed");
+    }
+    return res.json({ success: true, order });
   }
 
-  if (status === "voided" && !voided_by) {
-    return res
-      .status(400)
-      .json({ error: "voided_by is required when voiding an order" });
+  if (body.status !== "voided") throw new HttpError(400, "Invalid status");
+
+  if (!body.voided_by) {
+    throw new HttpError(400, "voided_by is required when voiding an order");
   }
+  const voidedBy = requireUuid(body.voided_by, "voided_by");
+  const reason = parseVoidReason(body.void_reason);
 
-  try {
-    const existing = await pool.query(
-      `SELECT id, status FROM orders WHERE id = $1 AND branch_id = $2`,
-      [req.params.id, req.branchId],
-    );
+  const { order, items } = await orders.voidOrder(
+    pool,
+    branchId,
+    id,
+    voidedBy,
+    reason,
+  );
 
-    if (!existing.rows.length) {
-      return res.status(404).json({ error: "Order not found" });
-    }
+  emit(req, "order_status_update", {
+    orderId: order.id,
+    status: order.status,
+    voided_by: order.voided_by,
+    void_reason: order.void_reason,
+    order,
+    items,
+  });
 
-    if (existing.rows[0].status === "voided" && status !== "voided") {
-      return res.status(400).json({ error: "Voided orders cannot be changed" });
-    }
-
-    const completedAt = null;
-    const voidedAt = status === "voided" ? new Date() : null;
-    const voidedBy = status === "voided" ? voided_by : null;
-    const voidReason = status === "voided" ? void_reason?.trim() || null : null;
-
-    const result = await pool.query(
-      `
-    UPDATE orders
-    SET status = $1,
-        completed_at = $2,
-        voided_at = $3,
-        voided_by = $4,
-        void_reason = $5
-    WHERE id = $6
-    RETURNING *
-    `,
-      [status, completedAt, voidedAt, voidedBy, voidReason, req.params.id],
-    );
-
-    if (result.rowCount === 0) {
-      return res.status(404).json({ error: "Order not found" });
-    }
-
-    try {
-      getIO(req)?.emit("order_status_update", {
-        orderId: req.params.id,
-        status,
-        voided_by: status === "voided" ? voided_by : null,
-        void_reason: status === "voided" ? void_reason?.trim() || null : null,
-      });
-    } catch (socketErr) {
-      console.error("socket emit error:", socketErr);
-    }
-
-    return res.json({
-      success: true,
-      order: result.rows[0],
-    });
-  } catch (err) {
-    console.error("updateOrderStatus error:", err);
-    return res.status(500).json({
-      error: "Status update failed",
-      details: err instanceof Error ? err.message : "Unknown error",
-    });
-  }
+  res.json({ success: true, order });
 }
 
 export async function printOrderById(req: Request, res: Response) {
-  try {
-    const orderResult = await pool.query(
-      `
-      SELECT o.*, w.name AS waiter_name
-      FROM orders o
-      LEFT JOIN waiters w ON w.id = o.waiter_id
-      WHERE o.id = $1
-      `,
-      [req.params.id],
-    );
+  const { order, items } = await orders.getOrderWithItems(
+    pool,
+    param(req.params.id),
+  );
 
-    if (!orderResult.rows.length) {
-      return res.status(404).json({ error: "Order not found" });
-    }
+  await printOrderReceipt({
+    orderId: order.id,
+    waiterName: order.waiter_name,
+    servingMode: order.serving_mode as string,
+    total: Number(order.total_amount),
+    items: items as unknown as Parameters<typeof printOrderReceipt>[0]["items"],
+  });
 
-    const itemsResult = await pool.query(
-      `
-      SELECT oi.*, m.name
-      FROM order_items oi
-      JOIN menu_items m ON oi.menu_item_id = m.id
-      WHERE oi.order_id = $1
-      ORDER BY oi.created_at ASC
-      `,
-      [req.params.id],
-    );
-
-    const order = orderResult.rows[0];
-
-    await printOrderReceipt({
-      orderId: order.id,
-      waiterName: order.waiter_name,
-      servingMode: order.serving_mode,
-      total: Number(order.total_amount),
-      items: itemsResult.rows,
-    });
-
-    return res.json({ success: true });
-  } catch (err) {
-    console.error("printOrderById error:", err);
-    return res.status(500).json({ error: "Failed to print order" });
-  }
+  res.json({ success: true });
 }
 
+/** GET /orders/by-range?from=YYYY-MM-DD&to=YYYY-MM-DD (admin, all branches). */
 export async function getOrdersByRange(req: Request, res: Response) {
-  const { from, to } = req.query as { from?: string; to?: string };
-
-  if (!from || !to) {
-    return res
-      .status(400)
-      .json({ error: "from and to query params are required (YYYY-MM-DD)" });
-  }
-
-  // Interpret the range in Addis Ababa local time, inclusive of the whole 'to' day
-  const start = new Date(`${from}T00:00:00+03:00`);
-  const end = new Date(`${to}T23:59:59.999+03:00`);
-
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-    return res
-      .status(400)
-      .json({ error: "Invalid date format. Use YYYY-MM-DD" });
-  }
-
-  if (start > end) {
-    return res.status(400).json({ error: "from must be before to" });
-  }
-
-  try {
-    const ordersResult = await pool.query(
-      `
-      SELECT o.*, w.name AS waiter_name
-      FROM orders o
-      LEFT JOIN waiters w ON w.id = o.waiter_id
-      WHERE o.created_at >= $1
-        AND o.created_at <= $2
-      ORDER BY o.created_at DESC
-      `,
-      [start, end],
+  if (!req.query.from || !req.query.to) {
+    throw new HttpError(
+      400,
+      "from and to query params are required (YYYY-MM-DD)",
     );
-
-    const orders = ordersResult.rows;
-
-    if (orders.length === 0) {
-      return res.json([]);
-    }
-
-    const orderIds = orders.map((o) => o.id);
-
-    const itemsResult = await pool.query(
-      `
-      SELECT oi.*, m.name
-      FROM order_items oi
-      JOIN menu_items m ON oi.menu_item_id = m.id
-      WHERE oi.order_id = ANY($1::uuid[])
-      ORDER BY oi.created_at ASC
-      `,
-      [orderIds],
-    );
-
-    const itemsByOrderId = new Map<string, any[]>();
-    for (const item of itemsResult.rows) {
-      if (!itemsByOrderId.has(item.order_id)) {
-        itemsByOrderId.set(item.order_id, []);
-      }
-      itemsByOrderId.get(item.order_id)!.push(item);
-    }
-
-    const payload = orders.map((order) => ({
-      order,
-      items: itemsByOrderId.get(order.id) || [],
-    }));
-
-    return res.json(payload);
-  } catch (err) {
-    console.error(err);
-    return res
-      .status(500)
-      .json({ error: "Failed to fetch orders by range" });
   }
+  const from = requireDay(req.query.from, "from");
+  const to = requireDay(req.query.to, "to");
+  if (from > to) throw new HttpError(400, "from must be before to");
+
+  res.json(await orders.listOrdersByRange(pool, from, to));
 }

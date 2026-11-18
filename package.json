@@ -1,12 +1,14 @@
 {
   "name": "sofi-beso-os",
   "version": "1.0.0",
-  "description": "",
+  "description": "Backend API for the Sofi Beso ordering system",
   "main": "dist/server.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
     "build": "tsc",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit",
+    "test": "tsc -p tsconfig.test.json && node --test --test-concurrency=1 build-test/test/*.test.js"
   },
   "keywords": [],
   "author": "",

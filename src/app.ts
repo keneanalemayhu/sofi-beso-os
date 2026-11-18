@@ -14,6 +14,7 @@ import savingsRoutes from "./routes/savings.routes";
 import wageRoutes from "./routes/wage.routes";
 import branchRoutes from "./routes/branch.routes";
 import settlementRoutes from "./routes/settlement.routes";
+import { errorHandler } from "./errors";
 
 export function createApp() {
   const app = express();
@@ -35,7 +36,7 @@ export function createApp() {
     }),
   );
 
-  app.use(express.json());
+  app.use(express.json({ limit: "1mb" }));
 
   app.use("/menu", menuRoutes);
   app.use("/categories", categoryRoutes);
@@ -47,11 +48,14 @@ export function createApp() {
   app.use("/wages", wageRoutes);
   app.use("/branches", branchRoutes);
   app.use("/sync", syncRoutes);
-  app.use("/expenses", expenseRoutes);
-  app.use("/savings", savingsRoutes);
   app.use("/settlements", settlementRoutes);
 
   app.get("/health", (_, res) => res.json({ ok: true }));
+
+  app.use((_req, res) => res.status(404).json({ error: "Not found" }));
+
+  // Must be last. Express 5 sends errors thrown in async handlers here.
+  app.use(errorHandler);
 
   return app;
 }

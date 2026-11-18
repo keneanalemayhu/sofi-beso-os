@@ -1,6 +1,7 @@
 // src/routes/menu.routes.ts
 
 import { Router } from "express";
+import { validateIdParam } from "../validation";
 import {
   getMenu,
   getAllMenuItems,
@@ -12,6 +13,9 @@ import {
 import { resolveBranch } from "../middleware/branch";
 
 const router = Router();
+
+// A malformed id is a 400, not a database error.
+router.param("id", validateIdParam);
 
 router.get("/", resolveBranch, getMenu);
 router.get("/all", getAllMenuItems);
